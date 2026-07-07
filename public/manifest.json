@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Image Translate Extension",
+  "version": "1.0.0",
+  "description": "A simple Image Translate Extension",
+  "action": {
+    "default_popup": "index.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "offscreen",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "onnx-assets/ort-wasm-simd-threaded.jsep.mjs",
+        "onnx-assets/ort-wasm-simd-threaded.jsep.wasm"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}
