@@ -39,35 +39,50 @@ async function sendImageToBackground(imageSelector: string) {
 }
 
 function renderOcrOverlays(img: HTMLImageElement, ocrData: OCRResult) {
-  // Container wrapper setup (as established in previous setup step)
-  const wrapper = document.createElement("div");
-  wrapper.style.position = "relative";
-  wrapper.style.display = "inline-block";
-  img.parentNode?.insertBefore(wrapper, img);
-  wrapper.appendChild(img);
+  // Create canvas element
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.style.maxWidth = img.style.maxWidth || "100%";
+  canvas.style.height = img.style.height || "auto";
+  canvas.style.display = img.style.display || "block";
 
-  const overlay = document.createElement("div");
-  overlay.style.position = "absolute";
-  overlay.style.top = "0"; overlay.style.left = "0";
-  overlay.style.width = "100%"; overlay.style.height = "100%";
-  overlay.style.pointerEvents = "none";
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    console.error("Failed to get canvas context");
+    return;
+  }
 
+  // Draw the image on canvas
+  ctx.drawImage(img, 0, 0);
+
+  // Draw OCR boxes and text
   ocrData.forEach(box => {
-    const boxDiv = document.createElement("div");
-    boxDiv.innerText = box.text;
-    boxDiv.style.position = "absolute";
-    // Assuming backend returns percentages:
-    boxDiv.style.top = `${box.top/2}px`;
-    boxDiv.style.left = `${box.left/2}px`;
-    boxDiv.style.width = `${box.width/2}px`;
-    boxDiv.style.height = `${box.height/2}px`;
-    boxDiv.style.border = "2px dashed #00ff00";
-    boxDiv.style.backgroundColor = "rgba(0, 255, 0, 0.15)";
-    boxDiv.style.color = "#00ff00";
-    overlay.appendChild(boxDiv);
+    const x = box.left;
+    const y = box.top;
+    const width = box.width;
+    const height = box.height;
+
+    // Draw rectangle background
+    ctx.fillStyle = "rgba(0, 255, 0, 0.15)";
+    ctx.fillRect(x, y, width, height);
+
+    // Draw rectangle border (dashed)
+    ctx.strokeStyle = "#00ff00";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(x, y, width, height);
+    ctx.setLineDash([]);
+
+    // Draw text
+    ctx.fillStyle = "#00ff00";
+    ctx.font = "14px Arial";
+    ctx.textBaseline = "top";
+    ctx.fillText(box.text, x + 4, y + 4);
   });
 
-  wrapper.appendChild(overlay);
+  // Replace image with canvas
+  img.parentNode?.replaceChild(canvas, img);
 }
 
 // Trigger selection
