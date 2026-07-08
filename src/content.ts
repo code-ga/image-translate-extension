@@ -15,6 +15,7 @@ async function sendImageToBackground(imageSelector: string) {
       fetchingType: "url",
       imageData: img.src
     });
+    console.log(bgResponse)
 
     if (bgResponse && bgResponse.success) {
       renderOcrOverlays(img, bgResponse.ocrData);
@@ -56,10 +57,10 @@ function renderOcrOverlays(img: HTMLImageElement, ocrData: OCRResult) {
     boxDiv.innerText = box.text;
     boxDiv.style.position = "absolute";
     // Assuming backend returns percentages:
-    boxDiv.style.top = `${box.top}%`;
-    boxDiv.style.left = `${box.left}%`;
-    boxDiv.style.width = `${box.width}%`;
-    boxDiv.style.height = `${box.height}%`;
+    boxDiv.style.top = `${box.top/2}px`;
+    boxDiv.style.left = `${box.left/2}px`;
+    boxDiv.style.width = `${box.width/2}px`;
+    boxDiv.style.height = `${box.height/2}px`;
     boxDiv.style.border = "2px dashed #00ff00";
     boxDiv.style.backgroundColor = "rgba(0, 255, 0, 0.15)";
     boxDiv.style.color = "#00ff00";

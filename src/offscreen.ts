@@ -8,7 +8,16 @@ ort.env.wasm.numThreads = 1;
 let ocrModelInstance: PaddleOcrService | null = null;
 
 async function initOcrModel() {
-	if (ocrModelInstance) return ocrModelInstance;
+	if (ocrModelInstance) {
+		console.log("Using cached model instance");
+		if (!ocrModelInstance.isInitialized()) {
+			console.log("Model instance exists but is not initialized. Initializing now...");
+			await ocrModelInstance.initialize();
+		} else {
+			console.log("Model instance is already initialized.");
+		}
+		return ocrModelInstance;
+	}
 
 	console.log("Downloading models and initializing engine...");
 
@@ -24,14 +33,29 @@ async function initOcrModel() {
 	console.log("Model successfully fetched and cached in memory!");
 	return ocrModelInstance;
 }
+function base64ToArrayBuffer(base64: string) {
+	// Decode base64 to a binary string
+	const binaryString = window.atob(base64);
+	const len = binaryString.length;
+	const bytes = new Uint8Array(len);
 
+	// Populate the typed array
+	for (let i = 0; i < len; i++) {
+		bytes[i] = binaryString.charCodeAt(i);
+	}
+
+	// Return the underlying ArrayBuffer
+	return bytes.buffer;
+}
 // Receive processing requests from background.js
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	if (message.target === 'offscreen' && message.type === 'run-ocr') {
 		(async () => {
 			try {
 				const model = await initOcrModel(); // Reuses the cached model structure instantly
-				const result = await model.recognize(message.imageDataUrl);
+				console.log(message);
+				const result = await model.recognize(base64ToArrayBuffer(message.imageDataUrl));
+				console.log("OCR processing completed:", result);
 				sendResponse({ success: true, data: result });
 			} catch (error) {
 				console.log("Error during OCR processing:", error);

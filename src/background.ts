@@ -1,4 +1,5 @@
 /// <reference types="chrome" />
+import { PaddleOcrResult } from "ppu-paddle-ocr";
 import { InternalMessageType, OCRResult } from "./types";
 
 
@@ -61,20 +62,20 @@ chrome.action.onClicked.addListener((tab) => {
   console.log('Extension icon clicked', tab);
 });
 
-function base64ToArrayBuffer(base64: string) {
-  // Decode base64 to a binary string
-  const binaryString = window.atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
 
-  // Populate the typed array
+
+function arrayBufferToBase64Legacy(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+
+  // Process in chunks to maintain high performance
   for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+    binary += String.fromCharCode(bytes[i]);
   }
-
-  // Return the underlying ArrayBuffer
-  return bytes.buffer;
+  return btoa(binary);
 }
+
 
 chrome.runtime.onMessage.addListener((message: InternalMessageType, _sender, sendResponse) => {
   if (message.action === "PROCESS_OCR") {
@@ -92,15 +93,15 @@ chrome.runtime.onMessage.addListener((message: InternalMessageType, _sender, sen
         });
       }
       try {
-        const imageData = message.fetchingType === "base64" ? base64ToArrayBuffer(message.imageData) : await (await fetch(message.imageData)).arrayBuffer()
+        const imageData = message.fetchingType === "base64" ? message.imageData : arrayBufferToBase64Legacy(await (await fetch(message.imageData)).arrayBuffer())
         // Send data payload to your custom server / API endpoint
-        const data = await chrome.runtime.sendMessage({
+        const data: { success: boolean; data: PaddleOcrResult } = await chrome.runtime.sendMessage({
           target: 'offscreen',
           type: 'run-ocr',
-          imageDataUrl: imageData
+          imageDataUrl: imageData // Convert ArrayBuffer to base64 string
         })
         console.log(data)
-        const ocrData: OCRResult = []
+        const ocrData: OCRResult = data.data.lines.flatMap(value => (value.flatMap(a => ({ text: a.text, top: a.box.y, left: a.box.x, width: a.box.width, height: a.box.height }))))
 
         // Send backend coordinates back to content script
         sendResponse({ success: true, ocrData: ocrData });
