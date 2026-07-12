@@ -171,7 +171,7 @@ async function initOcrModel() {
 }
 function base64ToArrayBuffer(base64: string) {
 	// Decode base64 to a binary string
-	const binaryString = window.atob(base64);
+	const binaryString = window.atob(base64.startsWith('data:') ? base64.split(',')[1] : base64);
 	const len = binaryString.length;
 	const bytes = new Uint8Array(len);
 
