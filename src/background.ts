@@ -27,15 +27,19 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "translate-image") {
 
     console.log("Thông tin phần tử:", info, tab);
 
-    if (tab?.id) {
-      chrome.scripting.executeScript({
+    if (tab?.id && info.srcUrl) {
+      await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: ["content.js"]
+      });
+      await chrome.tabs.sendMessage(tab.id, {
+        type: "translate",
+        url: info.srcUrl,
       });
     }
   }
@@ -101,13 +105,13 @@ chrome.runtime.onMessage.addListener((message: InternalMessageType, _sender, sen
           imageDataUrl: imageData // Convert ArrayBuffer to base64 string
         })
         console.log(data)
-        const ocrData: OCRResult = data.data.lines.flatMap(value => (value.flatMap(a => ({ text: a.text, top: a.box.y, left: a.box.x, width: a.box.width, height: a.box.height }))))
+        const ocrData: OCRResult = data.data.lines.flatMap(value => (value.flatMap(a => a.text.length > 0 ? [{ text: a.text, top: a.box.y, left: a.box.x, width: a.box.width, height: a.box.height }] : [])))
 
         // Send backend coordinates back to content script
         sendResponse({ success: true, ocrData: ocrData });
       } catch (err) {
         console.error("OCR API error:", err);
-        sendResponse({ success: false, error: err });
+        sendResponse({ success: false, error: new String(err) });
       }
     })();
 

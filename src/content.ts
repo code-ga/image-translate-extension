@@ -2,8 +2,7 @@
 
 import type { InternalMessageType, OCRResult } from "./types";
 
-async function sendImageToBackground(imageSelector: string) {
-  const img = document.querySelector(imageSelector);
+async function sendImageToBackground(img: HTMLImageElement | null) {
   if (!img || !(img instanceof HTMLImageElement)) return console.error("Image not found");
   console.log(img)
 
@@ -39,51 +38,52 @@ async function sendImageToBackground(imageSelector: string) {
 }
 
 function renderOcrOverlays(img: HTMLImageElement, ocrData: OCRResult) {
-  // Create canvas element
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  canvas.style.maxWidth = img.style.maxWidth || "100%";
-  canvas.style.height = img.style.height || "auto";
-  canvas.style.display = img.style.display || "block";
+  // Container wrapper setup (as established in previous setup step)
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "relative";
+  wrapper.style.display = "inline-block";
+  wrapper.className += img.className ? ` ${img.className}` : "";
+  img.parentNode?.insertBefore(wrapper, img);
+  wrapper.appendChild(img);
 
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    console.error("Failed to get canvas context");
-    return;
-  }
+  const overlay = document.createElement("div");
+  overlay.style.position = "absolute";
+  overlay.style.top = "0"; overlay.style.left = "0";
+  overlay.style.width = "100%"; overlay.style.height = "100%";
+  overlay.style.pointerEvents = "none";
 
-  // Draw the image on canvas
-  ctx.drawImage(img, 0, 0);
-
-  // Draw OCR boxes and text
   ocrData.forEach(box => {
-    const x = box.left;
-    const y = box.top;
-    const width = box.width;
-    const height = box.height;
-
-    // Draw rectangle background
-    ctx.fillStyle = "rgba(0, 255, 0, 0.15)";
-    ctx.fillRect(x, y, width, height);
-
-    // Draw rectangle border (dashed)
-    ctx.strokeStyle = "#00ff00";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(x, y, width, height);
-    ctx.setLineDash([]);
-
-    // Draw text
-    ctx.fillStyle = "#00ff00";
-    ctx.font = "14px Arial";
-    ctx.textBaseline = "top";
-    ctx.fillText(box.text, x + 4, y + 4);
+    const boxDiv = document.createElement("div");
+    boxDiv.innerText = box.text;
+    boxDiv.style.position = "absolute";
+    // Assuming backend returns percentages:
+    boxDiv.style.top = `${(box.top / img.naturalHeight) * 100}%`;
+    boxDiv.style.left = `${(box.left / img.naturalWidth) * 100}%`;
+    boxDiv.style.width = `${(box.width / img.naturalWidth) * 100}%`;
+    boxDiv.style.height = `${(box.height / img.naturalHeight) * 100}%`;
+    boxDiv.style.border = "2px dashed #00ff00";
+    boxDiv.style.backgroundColor = "rgba(255, 255, 255, 1)";
+    boxDiv.style.color = "#00ff00";
+    // Additional styling for text visibility
+    boxDiv.style.textAlign = "center";
+    boxDiv.style.display = "flex";
+    boxDiv.style.alignItems = "center";
+    boxDiv.style.justifyContent = "center";
+    boxDiv.style.fontSize = "auto";
+    boxDiv.style.whiteSpace = "nowrap";
+    boxDiv.style.textOverflow = "ellipsis";
+    overlay.appendChild(boxDiv);
   });
 
-  // Replace image with canvas
-  img.parentNode?.replaceChild(canvas, img);
+  wrapper.appendChild(overlay);
 }
 
-// Trigger selection
-sendImageToBackground("img");
+chrome.runtime.onMessage.addListener(msg => {
+
+  if (msg.type !== "translate")
+    return;
+  console.log("translate message received in content script", msg)
+  document.querySelectorAll(`img[src="${msg.url}"]`).forEach(img => {
+    sendImageToBackground(img as HTMLImageElement);
+  });
+});
