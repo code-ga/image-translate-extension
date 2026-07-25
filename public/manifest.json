@@ -18,6 +18,7 @@
     "scripting",
     "offscreen",
     "contextMenus",
+    "storage",
     "declarativeNetRequest",
     "declarativeNetRequestFeedback"
   ],

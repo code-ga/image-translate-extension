@@ -1,6 +1,6 @@
 /// <reference types="chrome" />
-import { PaddleOcrResult } from "ppu-paddle-ocr";
-import { InternalMessageType, OCRResult } from "./types";
+import { InternalMessageType } from "./types";
+import { OCR_BATCH_SIZE, OCR_BATCH_DEBOUNCE_MS } from "./ocr-config";
 
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -33,6 +33,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     console.log("Thông tin phần tử:", info, tab);
 
     if (tab?.id && info.srcUrl) {
+      const result = await chrome.storage.sync.get('extensionSettings')
+      const settings = (result as any)['extensionSettings'] || {}
+      const enabledDomains: string[] = settings.enabledDomains || []
+      const enabled: boolean = settings.enabled ?? true
+      const domain = new URL(tab.url || '').hostname
+      const isAllowed = enabled && (enabledDomains.length === 0 || enabledDomains.some((d: string) => domain === d || domain.endsWith('.' + d)))
+      if (!isAllowed) return
+
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: ["content.js"]
@@ -80,52 +88,126 @@ function arrayBufferToBase64Legacy(buffer: ArrayBuffer): string {
 }
 
 async function fetchImageAsBase64(url: string, headers?: Record<string, string>): Promise<string> {
-  const response = await fetch(url, { headers });
+  const headersInit = headers ? new Headers() : undefined;
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      headersInit?.append(key, value);
+    }
+  }
+  console.log("Fetching image from URL:", url, "with headers:", headersInit, headers);
+  console.log([...headersInit?.entries() || []]);
+  const response = await fetch(url, { headers: headersInit });
   const arrayBuffer = await response.arrayBuffer();
   return arrayBufferToBase64Legacy(arrayBuffer);
 }
 
 
-chrome.runtime.onMessage.addListener((message: InternalMessageType, _sender, sendResponse) => {
-    if (message.action === "PROCESS_OCR") {
-      (async () => {
-        const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+interface OcrBatchItem {
+	msg: InternalMessageType;
+	sendResponse: (response: any) => void;
+}
 
-        if (contexts.length === 0) {
-          await chrome.offscreen.createDocument({
-            url: 'offscreen.html',
-            reasons: ['DOM_PARSER'],
-            justification: 'Maintains persistent memory cache for the PaddleOCR engine.'
-          });
+const ocrBatchQueue: OcrBatchItem[] = [];
+let batchTimer: ReturnType<typeof setTimeout> | null = null;
+let activeBatchCount = 0;
+
+function scheduleBatchFlush() {
+	if (batchTimer !== null) return;
+	batchTimer = setTimeout(() => {
+		batchTimer = null;
+		flushOcrBatch();
+	}, OCR_BATCH_DEBOUNCE_MS);
+}
+
+async function flushOcrBatch() {
+	if (ocrBatchQueue.length === 0 || activeBatchCount > 0) return;
+
+	const batch = ocrBatchQueue.splice(0, Math.min(ocrBatchQueue.length, OCR_BATCH_SIZE));
+	activeBatchCount++;
+
+	try {
+		const resolvedItems = await Promise.all(batch.map(async (item) => {
+			if (item.msg.fetchingType === "url" && item.msg.headers) {
+				const base64 = await fetchImageAsBase64(item.msg.imageData, item.msg.headers);
+				return { fetchingType: "base64" as const, imageData: base64 };
+			}
+			return { fetchingType: item.msg.fetchingType, imageData: item.msg.imageData };
+		}));
+
+		const response = await new Promise<{ success: boolean; results?: any[]; error?: string }>((resolve) => {
+			chrome.runtime.sendMessage({
+				target: 'offscreen',
+				type: 'batch-run-ocr',
+				items: resolvedItems
+			}, (msgResponse) => {
+				if (chrome.runtime.lastError) {
+					resolve({ success: false, error: chrome.runtime.lastError.message });
+					return;
+				}
+				resolve(msgResponse as { success: boolean; results?: any[]; error?: string });
+			});
+		});
+
+		if (response && response.success && Array.isArray(response.results)) {
+			const results = response.results;
+			batch.forEach((item, index) => {
+				const result = results[index];
+				if (result && result.success) {
+					item.sendResponse({ success: true, ocrData: result.data });
+				} else {
+					item.sendResponse({
+						success: false,
+						error: result?.error || 'Unknown batch item error'
+					});
+				}
+			});
+		} else {
+			batch.forEach(item => {
+				item.sendResponse({
+					success: false,
+					error: response?.error || 'Batch processing failed'
+				});
+			});
+		}
+	} catch (error) {
+		batch.forEach(item => {
+			item.sendResponse({
+				success: false,
+				error: error instanceof Error ? error.message : 'Batch processing failed'
+			});
+		});
+	} finally {
+		activeBatchCount--;
+		scheduleBatchFlush();
+	}
+}
+
+chrome.runtime.onMessage.addListener((msg: InternalMessageType, _sender, sendResponse) => {
+	if (msg.action === "PROCESS_OCR") {
+		ocrBatchQueue.push({ msg, sendResponse });
+		scheduleBatchFlush();
+		return true;
+	}
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+	if (msg.type === "get-settings") {
+    chrome.storage.sync.get("extensionSettings", (result: any) => {
+      const settings = result["extensionSettings"] || { enabledDomains: [], enabled: true }
+      sendResponse(settings)
+    })
+    return true
+  }
+
+  if (msg.type === "notify-settings-changed") {
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, { type: "settings-changed", settings: msg.settings }).catch(() => {})
         }
-
-        try {
-          console.log("Processing OCR request in background script...", message);
-          const imageData = message.fetchingType === "base64"
-            ? message.imageData
-            : await fetchImageAsBase64(message.imageData, message.headers);
-          // Send data payload to your custom server / API endpoint
-          console.log("Sending image data to offscreen for OCR processing...", message.fetchingType === "base64" ? "base64 data" : "URL: " + message.imageData);
-          const data: { success: true; data: PaddleOcrResult } | { success: false; error: string } = await chrome.runtime.sendMessage({
-          target: 'offscreen',
-          type: 'run-ocr',
-          imageDataUrl: imageData // Convert ArrayBuffer to base64 string
-        })
-        if (!data.success) {
-          console.error("OCR processing failed:", data);
-          sendResponse({ success: false, error: data.error });
-          return;
-        }
-        const ocrData: OCRResult = data.data.lines.flatMap(value => (value.flatMap(a => a.text.length > 0 ? [{ text: a.text, top: a.box.y, left: a.box.x, width: a.box.width, height: a.box.height }] : [])))
-
-        // Send backend coordinates back to content script
-        sendResponse({ success: true, ocrData: ocrData });
-      } catch (err) {
-        console.error("OCR API error:", err);
-        sendResponse({ success: false, error: new String(err) });
       }
-    })();
-
-    return true; // Crucial rule: keeps messaging channel open for async response
+    })
+    sendResponse({ ok: true })
+    return true
   }
 });

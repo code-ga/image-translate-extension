@@ -1,6 +1,8 @@
 import ort from 'onnxruntime-web';
 
-import { PaddleOcrService } from "ppu-paddle-ocr/web";
+import { PaddleOcrService, PaddleOcrResult } from "ppu-paddle-ocr/web";
+import { OCRResult } from "./types";
+import { MAX_CONCURRENT } from "./ocr-config";
 // Route ONNX directly to the automated assets folder inside your build folder
 ort.env.wasm.wasmPaths = chrome.runtime.getURL('onnx-assets/');
 ort.env.wasm.numThreads = 1;
@@ -183,19 +185,50 @@ function base64ToArrayBuffer(base64: string) {
 	// Return the underlying ArrayBuffer
 	return bytes.buffer;
 }
-// Receive processing requests from background.js
+// Receive batch processing requests from background.js
+type BatchOcrItem = {
+	fetchingType: "url" | "base64";
+	imageData: string;
+	headers?: Record<string, string>;
+};
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-	if (message.target === 'offscreen' && message.type === 'run-ocr') {
+	if (message.target === 'offscreen' && message.type === 'batch-run-ocr') {
 		(async () => {
 			try {
-				const model = await initOcrModel(); // Reuses the cached model structure instantly
-				console.log("Running OCR on the provided image data...", message, "With ort model version is", model);
-				const result = await model.recognize(base64ToArrayBuffer(message.imageDataUrl));
-				console.log("OCR processing completed:", result);
-				model.destroy(); // Clean up the model instance after processing
-				sendResponse({ success: true, data: result });
+				const model = await initOcrModel();
+				const items = message.items as BatchOcrItem[];
+				const imageBuffers = items.map(item => base64ToArrayBuffer(item.imageData));
+
+				console.log(`Running batch OCR on ${imageBuffers.length} images...`);
+				const results = await model.batchRecognize(imageBuffers, {
+					concurrency: MAX_CONCURRENT,
+					settle: true,
+					strategy: "per-box"
+				});
+
+				const mappedResults = results.map(result => {
+						if (result.status === "fulfilled") {
+							const ocrData: OCRResult = (result.value as PaddleOcrResult).lines.flatMap(value =>
+							value.flatMap(a =>
+								a.text.length > 0
+									? [{
+										text: a.text,
+										top: a.box.y, left: a.box.x,
+										width: a.box.width, height: a.box.height
+									}]
+									: []
+							)
+						);
+						return { success: true, data: ocrData };
+					} else {
+						return { success: false, error: new String(result.reason) };
+					}
+				});
+
+				sendResponse({ success: true, results: mappedResults });
 			} catch (error) {
-				console.log("Error during OCR processing:", error);
+				console.error("Batch OCR error:", error);
 				sendResponse({ success: false, error: new String(error) });
 			}
 		})();
