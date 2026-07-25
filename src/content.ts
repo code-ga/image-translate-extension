@@ -1,6 +1,7 @@
 // content.js
 
-import type { InternalMessageType, OCRResult, ProgressMessageType, CompleteMessageType } from "./types";
+import type { InternalMessageType, OCRResult, ProgressMessageType, CompleteMessageType, DomainPattern } from "./types";
+import { isUrlAllowed } from "./domain-matcher";
 
 // Pick the best URL to fetch for OCR, preferring the highest-quality srcset
 // candidate. Candidates are scored by intrinsic width ("480w") or density
@@ -370,7 +371,7 @@ async function handleTranslateImages(urls: string[]) {
         processingImages.delete(img)
       }
     }
-    
+
     if (i < total - 1) {
       chrome.runtime.sendMessage<ProgressMessageType>({
         type: "translate-images-progress",
@@ -574,7 +575,7 @@ async function handleTranslateCanvases(indices: number[]) {
         processingCanvases.delete(canvas)
       }
     }
-    
+
     if (i < total - 1) {
       chrome.runtime.sendMessage<ProgressMessageType>({
         type: "translate-images-progress",
@@ -659,7 +660,7 @@ function stopLiveObserver() {
   }
 }
 
-function requestSettings(): Promise<{ enabled: boolean; enabledDomains: string[] }> {
+function requestSettings(): Promise<{ enabled: boolean; enabledDomains: DomainPattern[] }> {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'get-settings' }, (response: any) => {
       resolve(response || { enabled: true, enabledDomains: [] })
@@ -669,16 +670,16 @@ function requestSettings(): Promise<{ enabled: boolean; enabledDomains: string[]
 
 async function autoTranslateIfAllowed() {
   const settings = await requestSettings()
-  ;(window as unknown as { __extensionSettings: typeof settings }).__extensionSettings = settings
-  
+    ; (window as unknown as { __extensionSettings: typeof settings }).__extensionSettings = settings
+
   if (!settings.enabled) {
     stopLiveObserver()
     return
   }
 
-  const domain = new URL(window.location.href).hostname
-  const isAllowed = settings.enabledDomains.length === 0 || settings.enabledDomains.some((d: string) => domain === d || domain.endsWith('.' + d))
-  
+  const href = window.location.href
+  const isAllowed = settings.enabledDomains.length === 0 || isUrlAllowed(href, settings.enabledDomains)
+
   if (!isAllowed) {
     stopLiveObserver()
     return
@@ -710,10 +711,31 @@ async function autoTranslateIfAllowed() {
 }
 
 autoTranslateIfAllowed()
-;(window as unknown as {
-  sendOcrToHost: typeof sendOcrToHost;
-  removeOcrFromHost: typeof removeOcrFromHost;
-}).sendOcrToHost = sendOcrToHost;
+
+// SPA URL polling: detect pushState / hash changes and re-run auto-translate
+let __lastHref = window.location.href
+let __urlPollIntervalId: number | null = null
+function startUrlPolling() {
+  if (__urlPollIntervalId !== null) return
+  __urlPollIntervalId = window.setInterval(() => {
+    try {
+      const current = window.location.href
+      if (current !== __lastHref) {
+        __lastHref = current
+        // debounce briefly to avoid thrash when multiple changes happen quickly
+        setTimeout(() => autoTranslateIfAllowed(), 50)
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, 500)
+}
+
+startUrlPolling()
+  ; (window as unknown as {
+    sendOcrToHost: typeof sendOcrToHost;
+    removeOcrFromHost: typeof removeOcrFromHost;
+  }).sendOcrToHost = sendOcrToHost;
 (window as unknown as { removeOcrFromHost: typeof removeOcrFromHost }).removeOcrFromHost = removeOcrFromHost;
 
 window.addEventListener("scroll", schedulePositionUpdate, true);

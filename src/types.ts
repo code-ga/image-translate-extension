@@ -51,26 +51,28 @@ export type CanvasTranslateCommand = {
   indices: number[];
 }
 
+export type DomainPattern = string | { pattern: string; matchType: 'domain' | 'include' | 'regex' }
+
 export type SettingsResponse = {
   type: "settings-response";
-  enabledDomains: string[];
+  enabledDomains: DomainPattern[];
   enabled: boolean;
 }
 
 export type SettingsUpdate = {
   type: "settings-update";
-  enabledDomains?: string[];
+  enabledDomains?: DomainPattern[];
   enabled?: boolean;
 }
 
 export type NotifySettingsChanged = {
   type: "notify-settings-changed";
-  settings: { enabled: boolean; enabledDomains: string[] };
+  settings: { enabled: boolean; enabledDomains: DomainPattern[] };
 }
 
 export type SettingsChanged = {
   type: "settings-changed";
-  settings: { enabled: boolean; enabledDomains: string[] };
+  settings: { enabled: boolean; enabledDomains: DomainPattern[] };
 }
 
 export type ImageInfoWithStatus = {

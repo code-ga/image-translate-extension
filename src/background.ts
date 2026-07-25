@@ -1,5 +1,6 @@
 /// <reference types="chrome" />
-import { InternalMessageType } from "./types";
+import { InternalMessageType, DomainPattern } from "./types";
+import { isUrlAllowed } from './domain-matcher';
 import { OCR_BATCH_SIZE, OCR_BATCH_DEBOUNCE_MS } from "./ocr-config";
 
 
@@ -35,16 +36,20 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (tab?.id && info.srcUrl) {
       const result = await chrome.storage.sync.get('extensionSettings')
       const settings = (result as any)['extensionSettings'] || {}
-      const enabledDomains: string[] = settings.enabledDomains || []
+      const enabledDomains: DomainPattern[] = settings.enabledDomains || []
       const enabled: boolean = settings.enabled ?? true
-      const domain = new URL(tab.url || '').hostname
-      const isAllowed = enabled && (enabledDomains.length === 0 || enabledDomains.some((d: string) => domain === d || domain.endsWith('.' + d)))
+      const tabUrl = tab.url || ''
+      const isAllowed = enabled && (enabledDomains.length === 0 || isUrlAllowed(tabUrl, enabledDomains))
       if (!isAllowed) return
 
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["content.js"]
-      });
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["content.js"]
+        });
+      } catch (e) {
+        // ignore injection failures (chrome://, restricted pages, etc.)
+      }
       await chrome.tabs.sendMessage(tab.id, {
         type: "translate",
         url: info.srcUrl,
@@ -52,6 +57,31 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   }
 });
+
+// Inject content script on matching URL navigations
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  try {
+    console.log(`Tab updated: ${tabId}, URL: `, changeInfo, tab)
+    if (changeInfo.status !== 'complete' || !tab?.url) return
+    const result = await chrome.storage.sync.get('extensionSettings')
+    const settings = (result as any)['extensionSettings'] || {}
+    const enabledDomains: DomainPattern[] = settings.enabledDomains || []
+    const enabled: boolean = settings.enabled ?? true
+    if (!enabled) return
+    // Skip non-http(s) schemes
+    if (!/^https?:/.test(tab.url)) return
+    console.log(isUrlAllowed(tab.url, enabledDomains))
+    if (enabledDomains.length === 0 || isUrlAllowed(tab.url, enabledDomains)) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] })
+      } catch (e) {
+        // ignore injection failures
+      }
+    }
+  } catch (e) {
+    console.warn('tabs.onUpdated handler error', e)
+  }
+})
 
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -103,8 +133,8 @@ async function fetchImageAsBase64(url: string, headers?: Record<string, string>)
 
 
 interface OcrBatchItem {
-	msg: InternalMessageType;
-	sendResponse: (response: any) => void;
+  msg: InternalMessageType;
+  sendResponse: (response: any) => void;
 }
 
 const ocrBatchQueue: OcrBatchItem[] = [];
@@ -112,86 +142,86 @@ let batchTimer: ReturnType<typeof setTimeout> | null = null;
 let activeBatchCount = 0;
 
 function scheduleBatchFlush() {
-	if (batchTimer !== null) return;
-	batchTimer = setTimeout(() => {
-		batchTimer = null;
-		flushOcrBatch();
-	}, OCR_BATCH_DEBOUNCE_MS);
+  if (batchTimer !== null) return;
+  batchTimer = setTimeout(() => {
+    batchTimer = null;
+    flushOcrBatch();
+  }, OCR_BATCH_DEBOUNCE_MS);
 }
 
 async function flushOcrBatch() {
-	if (ocrBatchQueue.length === 0 || activeBatchCount > 0) return;
+  if (ocrBatchQueue.length === 0 || activeBatchCount > 0) return;
 
-	const batch = ocrBatchQueue.splice(0, Math.min(ocrBatchQueue.length, OCR_BATCH_SIZE));
-	activeBatchCount++;
+  const batch = ocrBatchQueue.splice(0, Math.min(ocrBatchQueue.length, OCR_BATCH_SIZE));
+  activeBatchCount++;
 
-	try {
-		const resolvedItems = await Promise.all(batch.map(async (item) => {
-			if (item.msg.fetchingType === "url" && item.msg.headers) {
-				const base64 = await fetchImageAsBase64(item.msg.imageData, item.msg.headers);
-				return { fetchingType: "base64" as const, imageData: base64 };
-			}
-			return { fetchingType: item.msg.fetchingType, imageData: item.msg.imageData };
-		}));
+  try {
+    const resolvedItems = await Promise.all(batch.map(async (item) => {
+      if (item.msg.fetchingType === "url" && item.msg.headers) {
+        const base64 = await fetchImageAsBase64(item.msg.imageData, item.msg.headers);
+        return { fetchingType: "base64" as const, imageData: base64 };
+      }
+      return { fetchingType: item.msg.fetchingType, imageData: item.msg.imageData };
+    }));
 
-		const response = await new Promise<{ success: boolean; results?: any[]; error?: string }>((resolve) => {
-			chrome.runtime.sendMessage({
-				target: 'offscreen',
-				type: 'batch-run-ocr',
-				items: resolvedItems
-			}, (msgResponse) => {
-				if (chrome.runtime.lastError) {
-					resolve({ success: false, error: chrome.runtime.lastError.message });
-					return;
-				}
-				resolve(msgResponse as { success: boolean; results?: any[]; error?: string });
-			});
-		});
+    const response = await new Promise<{ success: boolean; results?: any[]; error?: string }>((resolve) => {
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'batch-run-ocr',
+        items: resolvedItems
+      }, (msgResponse) => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(msgResponse as { success: boolean; results?: any[]; error?: string });
+      });
+    });
 
-		if (response && response.success && Array.isArray(response.results)) {
-			const results = response.results;
-			batch.forEach((item, index) => {
-				const result = results[index];
-				if (result && result.success) {
-					item.sendResponse({ success: true, ocrData: result.data });
-				} else {
-					item.sendResponse({
-						success: false,
-						error: result?.error || 'Unknown batch item error'
-					});
-				}
-			});
-		} else {
-			batch.forEach(item => {
-				item.sendResponse({
-					success: false,
-					error: response?.error || 'Batch processing failed'
-				});
-			});
-		}
-	} catch (error) {
-		batch.forEach(item => {
-			item.sendResponse({
-				success: false,
-				error: error instanceof Error ? error.message : 'Batch processing failed'
-			});
-		});
-	} finally {
-		activeBatchCount--;
-		scheduleBatchFlush();
-	}
+    if (response && response.success && Array.isArray(response.results)) {
+      const results = response.results;
+      batch.forEach((item, index) => {
+        const result = results[index];
+        if (result && result.success) {
+          item.sendResponse({ success: true, ocrData: result.data });
+        } else {
+          item.sendResponse({
+            success: false,
+            error: result?.error || 'Unknown batch item error'
+          });
+        }
+      });
+    } else {
+      batch.forEach(item => {
+        item.sendResponse({
+          success: false,
+          error: response?.error || 'Batch processing failed'
+        });
+      });
+    }
+  } catch (error) {
+    batch.forEach(item => {
+      item.sendResponse({
+        success: false,
+        error: error instanceof Error ? error.message : 'Batch processing failed'
+      });
+    });
+  } finally {
+    activeBatchCount--;
+    scheduleBatchFlush();
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg: InternalMessageType, _sender, sendResponse) => {
-	if (msg.action === "PROCESS_OCR") {
-		ocrBatchQueue.push({ msg, sendResponse });
-		scheduleBatchFlush();
-		return true;
-	}
+  if (msg.action === "PROCESS_OCR") {
+    ocrBatchQueue.push({ msg, sendResponse });
+    scheduleBatchFlush();
+    return true;
+  }
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-	if (msg.type === "get-settings") {
+  if (msg.type === "get-settings") {
     chrome.storage.sync.get("extensionSettings", (result: any) => {
       const settings = result["extensionSettings"] || { enabledDomains: [], enabled: true }
       sendResponse(settings)
@@ -203,7 +233,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
         if (tab.id) {
-          chrome.tabs.sendMessage(tab.id, { type: "settings-changed", settings: msg.settings }).catch(() => {})
+          chrome.tabs.sendMessage(tab.id, { type: "settings-changed", settings: msg.settings }).catch(() => { })
         }
       }
     })

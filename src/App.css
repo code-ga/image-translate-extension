@@ -351,6 +351,20 @@
   margin-top: 8px;
 }
 
+.match-type {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #a0a0b0;
+}
+.match-type label {
+  font-size: 12px;
+  cursor: pointer;
+}
+.match-type input {
+  margin-right: 6px;
+}
+
 .add-domain input {
   flex: 1;
   padding: 8px 10px;
