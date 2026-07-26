@@ -1,7 +1,7 @@
 import "./App.css";
 import { useState, useEffect, useCallback } from "react";
-import { DomainPattern } from "./types";
-import { isUrlAllowed } from "./domain-matcher";
+import { DomainPattern } from "../types";
+import { isUrlAllowed } from "../domain-matcher";
 
 const STORAGE_KEY = "extensionSettings";
 
