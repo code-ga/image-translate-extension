@@ -12,9 +12,9 @@ This is a Chrome extension (Manifest V3) that automatically translates text insi
 ## File Responsibilities
 
 ### Entry Points
-- **`src/main.tsx`** — React entry point that mounts `<App />` into the popup.
-- **`public/offscreen.html`** — Host page for the offscreen document where PaddleOCR runs.
-- **`public/manifest.json`** — Extension manifest declaring permissions, background service worker, offscreen document, CSP, and web-accessible resources.
+- **`src/popup/main.tsx`** — React entry point that mounts `<App />` into the popup.
+- **`offscreen.html`** — Host page for the offscreen document where PaddleOCR runs.
+- **`src/manifest.ts`** — Chrome extension manifest configuration (Manifest V3) used by `@crxjs/vite-plugin`.
 
 ### Background / Service Worker
 - **`src/background.ts`**
@@ -97,6 +97,19 @@ This is a Chrome extension (Manifest V3) that automatically translates text insi
 - Popup sends `get-image-status` and `get-canvas-status` to content script every 1.5s.
 - Content script returns arrays including `status` field derived from `processingImages`/`processingCanvases` and `processedImages`/`processedCanvases` maps.
 - Popup renders badges: hidden for `pending`, orange pulsing `Translating...` for `processing`, green `Done` for completed.
+
+## Build Instructions
+
+```bash
+npm run build   # Runs prebuild (copies WASM files) → tsc -b (type check) → vite build
+npm run dev     # Starts Vite dev server
+npm run lint    # ESLint with strict unused-disable-directives policy
+npm run preview # Preview the production build
+```
+
+**Build prerequisites**: The `prebuild` script copies `ort-wasm-simd-threaded.jsep.*` files from `node_modules/onnxruntime-web/dist/` to `onnx-assets/` at the project root, which the Chrome extension manifest references as web-accessible resources. This copy must happen before the CRX manifest post-processing step.
+
+**TypeScript configuration**: Uses a two-project setup with `tsc -b`: `tsconfig.app.json` (browser target: ES2020, DOM lib, React JSX) and `tsconfig.node.json` (build tooling only: `vite.config.ts` + `src/manifest.ts`). The project references are defined in the root `tsconfig.json`.
 
 ## Settings Storage
 Stored under `chrome.storage.sync` key `extensionSettings`:

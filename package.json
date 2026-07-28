@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run prebuild && tsc -b && vite build",
+    "prebuild": "node -e \"const fs=require('fs');const p='onnx-assets';fs.mkdirSync(p,{recursive:true});['ort-wasm-simd-threaded.jsep.mjs','ort-wasm-simd-threaded.jsep.wasm'].forEach(f=>{fs.copyFileSync('node_modules/onnxruntime-web/dist/'+f,p+'/'+f);});\"",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

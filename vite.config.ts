@@ -10,10 +10,6 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: 'public/manifest.json',
-          dest: '.',
-        },
-        {
           // Grab the threaded WASM and matching JS wrapper file paths
           src: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.*',
           // Destination folder inside your final build/ directory

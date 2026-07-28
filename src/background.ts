@@ -11,7 +11,7 @@ chrome.runtime.onStartup.addListener(async () => {
   if (contexts.length === 0) {
     // This spins up the offscreen tab, which triggers model caching instantly
     await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
+      url: 'src/offscreen.html',
       reasons: ['DOM_PARSER'],
       justification: 'Maintains persistent memory cache for the PaddleOCR engine.'
     });
@@ -92,7 +92,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (contexts.length === 0) {
     // This spins up the offscreen tab, which triggers model caching instantly
     await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
+      url: 'src/offscreen.html',
       reasons: ['DOM_PARSER'],
       justification: 'Maintains persistent memory cache for the PaddleOCR engine.'
     });
