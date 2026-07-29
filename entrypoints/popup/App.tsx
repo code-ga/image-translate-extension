@@ -1,7 +1,7 @@
 import "./App.css";
 import { useState, useEffect, useCallback } from "react";
-import { DomainPattern } from "./types";
-import { isUrlAllowed } from "./domain-matcher";
+import { DomainPattern } from "@/types";
+import { isUrlAllowed } from "@/utils/domain-matcher";
 
 const STORAGE_KEY = "extensionSettings";
 
@@ -38,15 +38,15 @@ function App() {
 	const [canvasProcessingCount, setCanvasProcessingCount] = useState(0);
 
 	const injectContentScript = useCallback(async (tabId: number) => {
-		await chrome.scripting.executeScript({
+		await browser.scripting.executeScript({
 			target: { tabId },
-			files: ["content.js"],
+			files: ["/content-scripts/content.js"],
 		});
 		await new Promise((r) => setTimeout(r, 800));
 	}, []);
 
 	const loadSettings = useCallback(async () => {
-		const result = (await chrome.storage.sync.get(STORAGE_KEY)) as Record<
+		const result = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
 			string,
 			any
 		>;
@@ -63,7 +63,7 @@ function App() {
 			enabledDomains?: DomainPattern[];
 			enabled?: boolean;
 		}) => {
-			const current = (await chrome.storage.sync.get(STORAGE_KEY)) as Record<
+			const current = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
 				string,
 				any
 			>;
@@ -71,11 +71,11 @@ function App() {
 				...(current[STORAGE_KEY] || { enabledDomains: [], enabled: true }),
 				...updates,
 			};
-			await chrome.storage.sync.set({ [STORAGE_KEY]: settings });
+			await browser.storage.sync.set({ [STORAGE_KEY]: settings });
 			setEnabledDomains(settings.enabledDomains || []);
 			setGlobalEnabled(settings.enabled ?? true);
 
-			chrome.runtime
+			browser.runtime
 				.sendMessage({
 					type: "notify-settings-changed",
 					settings: {
@@ -90,7 +90,7 @@ function App() {
 
 	const pollPageData = useCallback(async () => {
 		try {
-			const [tab] = await chrome.tabs.query({
+			const [tab] = await browser.tabs.query({
 				active: true,
 				currentWindow: true,
 			});
@@ -100,8 +100,8 @@ function App() {
 
 			try {
 				const [imagesResponse, canvasesResponse] = await Promise.all([
-					chrome.tabs.sendMessage(tab.id, { type: "get-image-status" }),
-					chrome.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
+					browser.tabs.sendMessage(tab.id, { type: "get-image-status" }),
+					browser.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
 				]);
 				if (
 					imagesResponse &&
@@ -130,8 +130,8 @@ function App() {
 			} catch (err) {
 				await injectContentScript(tab.id);
 				const [imagesResponse, canvasesResponse] = await Promise.all([
-					chrome.tabs.sendMessage(tab.id, { type: "get-image-status" }),
-					chrome.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
+					browser.tabs.sendMessage(tab.id, { type: "get-image-status" }),
+					browser.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
 				]);
 				if (
 					imagesResponse &&
@@ -182,10 +182,10 @@ function App() {
 			}
 		};
 
-		chrome.runtime.onMessage.addListener(progressListener);
+		browser.runtime.onMessage.addListener(progressListener);
 		return () => {
 			clearInterval(interval);
-			chrome.runtime.onMessage.removeListener(progressListener);
+			browser.runtime.onMessage.removeListener(progressListener);
 		};
 	}, [loadSettings, pollPageData, tab]);
 
@@ -427,7 +427,10 @@ function App() {
 
 					<div className="domain-list">
 						{enabledDomains.map((d, idx) => (
-							<div key={idx} className="domain-item">
+							<div
+								key={typeof d === "string" ? d : `${d.matchType}: ${d.pattern}`}
+								className="domain-item"
+							>
 								<span className="domain-name">
 									{typeof d === "string" ? d : `${d.matchType}: ${d.pattern}`}
 								</span>
