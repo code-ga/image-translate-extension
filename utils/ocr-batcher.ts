@@ -1,5 +1,5 @@
 import ort from "onnxruntime-web";
-import { type PaddleOcrResult, PaddleOcrService } from "ppu-paddle-ocr/web";
+import { type PaddleOcrResult, PaddleOcrService, V6_SMALL_MODEL } from "ppu-paddle-ocr/web";
 import { MAX_CONCURRENT } from "@/config/ocr-config";
 import type { OCRResult } from "@/types";
 
@@ -10,7 +10,12 @@ type BatchOcrItem = {
 };
 
 ort.env.wasm.wasmPaths = browser.runtime.getURL("onnx/" as any);
-ort.env.wasm.numThreads = 1;
+// ort.env.wasm.numThreads = 1;
+
+console.log("Web gpu", ort.env.webgpu)
+console.log("Web gl", ort.env.webgl)
+console.log("wasm", ort.env.wasm)
+console.log("navigator gpu", navigator.gpu)
 
 let ocrModelInstance: PaddleOcrService | null = null;
 
@@ -50,12 +55,18 @@ export async function initOcrModel(): Promise<PaddleOcrService> {
 			verbose: true,
 		},
 		session: {
-			executionProviders: ["webgpu", "wasm"],
+			executionProviders: ["gpu", "webgpu", "webgl", "wasm"],
 			enableCpuMemArena: false,
 			enableMemPattern: false,
+			graphOptimizationLevel: "disabled"
 		},
 	});
 	await ocrModelInstance.initialize();
+	console.log("Web gpu", ort.env.webgpu)
+	console.log("Web gl", ort.env.webgl)
+	console.log("wasm", ort.env.wasm)
+	console.log("navigator gpu", navigator.gpu)
+
 
 	console.log("Model successfully fetched and cached in memory!");
 	return ocrModelInstance;
@@ -67,7 +78,6 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 
 	console.log(`Running batch OCR on ${imageBuffers.length} images...`);
 	const results = await model.batchRecognize(imageBuffers, {
-		concurrency: MAX_CONCURRENT,
 		settle: true,
 		strategy: "per-box",
 	});
@@ -80,14 +90,14 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 				value.flatMap((a) =>
 					a.text.length > 0
 						? [
-								{
-									text: a.text,
-									top: a.box.y,
-									left: a.box.x,
-									width: a.box.width,
-									height: a.box.height,
-								},
-							]
+							{
+								text: a.text,
+								top: a.box.y,
+								left: a.box.x,
+								width: a.box.width,
+								height: a.box.height,
+							},
+						]
 						: [],
 				),
 			);

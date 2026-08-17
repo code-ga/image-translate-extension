@@ -1,5 +1,22 @@
 # Changes Log
 
+## 2026-08-13 — Migrated content script from background-triggered to always-present
+
+**Removed**: `utils/script-injection.ts` (no longer needed)
+
+Changed the content script from being manually injected by `background.ts` on Google pages to running on all pages automatically via manifest `matches: ["<all_urls>"]`. The extension is now dormant until the user explicitly triggers translation from the popup or context menu.
+
+**Key changes**:
+- `entrypoints/content.ts`: `defineContentScript` matches changed to `<all_urls>`; removed `autoTranslateIfAllowed()`, `startUrlPolling`, `settings-changed` handler, and all dead code (`requestSettings`, `getTranslateableImages`, `getTranslateableCanvases`, `liveObserver`)
+- `entrypoints/background.ts`: removed `injectContentScript` import, `isTabAllowed` function, and `tabs.onUpdated` listener; context menu handler now sends `sendMessage` directly (wrapped in `.catch`) for graceful handling on restricted pages
+- `entrypoints/popup/App.tsx`: removed local `injectContentScript` callback and retry-injection pattern; `pollPageData` now catches `sendMessage` errors and resets state to empty instead of attempting injection
+
+### Validation
+- `bun run compile` passes (only pre-existing `ocr-batcher.ts` WebGPU type errors remain, unrelated to this change)
+- `scripting` permission still needed for potential future use but no longer used for content script injection
+
+---
+
 ## 2026-07-29 — Refactored content.ts, background.ts, and offscreen.ts into utility modules
 
 ### Phase 1: content.ts refactoring (see earlier entry)

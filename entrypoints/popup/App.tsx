@@ -37,14 +37,6 @@ function App() {
 	const [imageProcessingCount, setImageProcessingCount] = useState(0);
 	const [canvasProcessingCount, setCanvasProcessingCount] = useState(0);
 
-	const injectContentScript = useCallback(async (tabId: number) => {
-		await browser.scripting.executeScript({
-			target: { tabId },
-			files: ["/content-scripts/content.js"],
-		});
-		await new Promise((r) => setTimeout(r, 800));
-	}, []);
-
 	const loadSettings = useCallback(async () => {
 		const result = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
 			string,
@@ -127,41 +119,18 @@ function App() {
 						).length,
 					);
 				}
-			} catch (err) {
-				await injectContentScript(tab.id);
-				const [imagesResponse, canvasesResponse] = await Promise.all([
-					browser.tabs.sendMessage(tab.id, { type: "get-image-status" }),
-					browser.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
-				]);
-				if (
-					imagesResponse &&
-					(imagesResponse as any).type === "image-status-list"
-				) {
-					setImages((imagesResponse as any).images);
-					setImageCount((imagesResponse as any).images.length);
-					setImageProcessingCount(
-						(imagesResponse as any).images.filter(
-							(i: ImageInfo) => i.status === "processing",
-						).length,
-					);
-				}
-				if (
-					canvasesResponse &&
-					(canvasesResponse as any).type === "canvas-status-list"
-				) {
-					setCanvases((canvasesResponse as any).canvases);
-					setCanvasCount((canvasesResponse as any).canvases.length);
-					setCanvasProcessingCount(
-						(canvasesResponse as any).canvases.filter(
-							(c: CanvasInfo) => c.status === "processing",
-						).length,
-					);
-				}
+			} catch (_err) {
+				setImages([]);
+				setCanvases([]);
+				setImageCount(0);
+				setCanvasCount(0);
+				setImageProcessingCount(0);
+				setCanvasProcessingCount(0);
 			}
-		} catch (err) {
+		} catch (_err) {
 			// ignore polling errors when tab is not active
 		}
-	}, [injectContentScript]);
+	}, []);
 
 	useEffect(() => {
 		loadSettings();

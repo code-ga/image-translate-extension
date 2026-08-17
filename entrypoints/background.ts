@@ -4,21 +4,6 @@ import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
 import type { InternalMessageType } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { getExtensionSettings } from "@/utils/extension-settings";
-import { injectContentScript } from "@/utils/script-injection";
-
-async function isTabAllowed(tab: {
-	url?: string;
-	id?: number;
-}): Promise<boolean> {
-	if (!tab.url || !tab.id) return false;
-	if (!/^https?:/.test(tab.url)) return false;
-	const settings = await getExtensionSettings();
-	if (!settings.enabled) return false;
-	return (
-		settings.enabledDomains.length === 0 ||
-		isUrlAllowed(tab.url, settings.enabledDomains)
-	);
-}
 
 export default defineBackground({
 	type: "module",
@@ -54,22 +39,12 @@ export default defineBackground({
 					isUrlAllowed(tabUrl, settings.enabledDomains));
 			if (!isAllowed) return;
 
-			await injectContentScript(tab.id);
-			await browser.tabs.sendMessage(tab.id, {
-				type: "translate",
-				url: info.srcUrl,
-			});
-		});
-
-		browser.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
-			try {
-				if (changeInfo.status !== "complete" || !tab?.url) return;
-				if (!(await isTabAllowed(tab))) return;
-				if (!tab.id) return;
-				await injectContentScript(tab.id);
-			} catch (e) {
-				console.warn("tabs.onUpdated handler error", e);
-			}
+			browser.tabs
+				.sendMessage(tab.id, {
+					type: "translate",
+					url: info.srcUrl,
+				})
+				.catch(() => {});
 		});
 
 		browser.action.onClicked.addListener((tab) => {

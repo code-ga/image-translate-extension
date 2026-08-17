@@ -1,15 +1,8 @@
 import type {
 	CompleteMessageType,
-	DomainPattern,
 	OCRResult,
 	ProgressMessageType,
 } from "@/types";
-import {
-	startLiveObserver,
-	startUrlPolling,
-	stopLiveObserver,
-} from "@/utils/dom-observer";
-import { isUrlAllowed } from "@/utils/domain-matcher";
 import { createElementState } from "@/utils/element-state";
 import { processCanvas, processImage } from "@/utils/ocr-pipeline";
 import {
@@ -182,7 +175,7 @@ function collectImageInfo() {
 			status: imageState.processingSet.has(img)
 				? "processing"
 				: imageState.processed.has(img) &&
-						imageState.processed.get(img) === (img.currentSrc || img.src)
+					imageState.processed.get(img) === (img.currentSrc || img.src)
 					? "done"
 					: "pending",
 		});
@@ -204,101 +197,15 @@ async function removeOcrFromHost(src: string) {
 	if (overlay) clearOcrOverlays(overlay);
 }
 
-function requestSettings(): Promise<{
-	enabled: boolean;
-	enabledDomains: DomainPattern[];
-}> {
-	return new Promise((resolve) => {
-		browser.runtime.sendMessage(
-			{ type: "get-settings" },
-			(response: { enabled: boolean; enabledDomains: DomainPattern[] }) => {
-				resolve(response || { enabled: true, enabledDomains: [] });
-			},
-		);
-	});
+interface ContextMenuContext {
+	x: number;
+	y: number;
+	target: EventTarget | null;
+	composedPath: EventTarget[];
 }
-
-function getTranslateableImages(): HTMLImageElement[] {
-	const results: HTMLImageElement[] = [];
-	for (const img of Array.from(document.images)) {
-		const width = img.naturalWidth || img.width || 0;
-		const height = img.naturalHeight || img.height || 0;
-		if (width < 30 || height < 30) continue;
-		const style = getComputedStyle(img);
-		if (
-			style.display === "none" ||
-			style.visibility === "hidden" ||
-			style.opacity === "0"
-		)
-			continue;
-		results.push(img);
-	}
-	return results;
-}
-
-function getTranslateableCanvases(): HTMLCanvasElement[] {
-	const results: HTMLCanvasElement[] = [];
-	for (const canvas of Array.from(document.querySelectorAll("canvas"))) {
-		const width = canvas.width || 0;
-		const height = canvas.height || 0;
-		if (width < 30 || height < 30) continue;
-		const style = getComputedStyle(canvas);
-		if (
-			style.display === "none" ||
-			style.visibility === "hidden" ||
-			style.opacity === "0"
-		)
-			continue;
-		results.push(canvas);
-	}
-	return results;
-}
-
-async function autoTranslateIfAllowed() {
-	const settings = await requestSettings();
-	(
-		window as unknown as { __extensionSettings: typeof settings }
-	).__extensionSettings = settings;
-
-	if (!settings.enabled) {
-		stopLiveObserver(liveObserver);
-		return;
-	}
-
-	const href = window.location.href;
-	const isAllowed =
-		settings.enabledDomains.length === 0 ||
-		isUrlAllowed(href, settings.enabledDomains);
-
-	if (!isAllowed) {
-		stopLiveObserver(liveObserver);
-		return;
-	}
-
-	for (const img of Array.from(getTranslateableImages())) {
-		if (!imageState.processed.has(img)) {
-			processNewImage(img);
-		}
-	}
-
-	for (const canvas of Array.from(getTranslateableCanvases())) {
-		if (!canvasState.processed.has(canvas)) {
-			processNewCanvas(canvas);
-		}
-	}
-
-	liveObserver = startLiveObserver(processNewImage, processNewCanvas);
-}
-
-let liveObserver: MutationObserver | null = null;
-
 export default defineContentScript({
-	matches: ["*://*.google.com/*"],
+	matches: ["<all_urls>"],
 	main() {
-		autoTranslateIfAllowed();
-
-		startUrlPolling(autoTranslateIfAllowed);
-
 		(
 			window as unknown as {
 				sendOcrToHost: typeof sendOcrToHost;
@@ -313,6 +220,16 @@ export default defineContentScript({
 		window.addEventListener("resize", imageState.schedulePositionUpdate);
 		window.addEventListener("scroll", canvasState.schedulePositionUpdate, true);
 		window.addEventListener("resize", canvasState.schedulePositionUpdate);
+		let currentContext: ContextMenuContext | null = null;
+
+		document.addEventListener("contextmenu", (e) => {
+			currentContext = {
+				x: e.clientX,
+				y: e.clientY,
+				target: e.target,
+				composedPath: e.composedPath(),
+			};
+		});
 
 		browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 			if (msg.type === "get-images") {
@@ -339,17 +256,12 @@ export default defineContentScript({
 			}
 
 			if (msg.type === "translate-images") {
-				handleTranslateImages(msg.urls);
+				handleTranslateImages(msg.urls, currentContext);
 				return true;
 			}
 
 			if (msg.type === "translate-canvases") {
 				handleTranslateCanvases(msg.indices);
-				return true;
-			}
-
-			if (msg.type === "settings-changed") {
-				autoTranslateIfAllowed();
 				return true;
 			}
 
@@ -365,13 +277,23 @@ export default defineContentScript({
 	},
 });
 
-async function handleTranslateImages(urls: string[]) {
+async function handleTranslateImages(urls: string[], currentContext?: ContextMenuContext | null) {
 	const total = urls.length;
 	let successCount = 0;
 
 	for (let i = 0; i < urls.length; i++) {
 		const url = urls[i];
-		const img = findImageBySrc(url);
+		const img = (() => {
+			const contextElement = currentContext ?
+				(currentContext?.target ??
+					document.elementsFromPoint(currentContext.x, currentContext.y)[0])
+				: null
+			if (contextElement instanceof HTMLImageElement) {
+				console.log("we attempted to fetched context menu element", contextElement)
+				return contextElement
+			}
+			return findImageBySrc(url)
+		})();
 		if (img) {
 			processNewImage(img);
 			successCount++;
@@ -459,7 +381,7 @@ function collectCanvasInfo(): {
 			status: canvasState.processingSet.has(canvas)
 				? "processing"
 				: canvasState.processed.has(canvas) &&
-						canvasState.processed.get(canvas) === canvas.toDataURL()
+					canvasState.processed.get(canvas) === canvas.toDataURL()
 					? "done"
 					: "pending",
 		});

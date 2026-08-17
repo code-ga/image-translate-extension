@@ -25,7 +25,6 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | `utils/asset-cache.ts` | IndexedDB asset caching, cache URL validation, fetch wrapper installation |
 | `utils/ocr-batcher.ts` | PaddleOcrService model initialization and batch OCR execution |
 | `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking |
-| `utils/script-injection.ts` | Safe content script injection helper |
 | `utils/domain-matcher.ts` | URL domain/pattern matching for extension enablement rules |
 | `utils/constants.ts` | Shared constants (offscreen paths, message targets) |
 
@@ -39,16 +38,17 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 
 ## Feature Flow
 
-1. **Page load / SPA navigation**: `content.ts` → `autoTranslateIfAllowed()` checks settings, processes existing images/canvases, starts live DOM observer and URL polling
-2. **New element added**: `dom-observer.ts` → `handleAddedNodes()` → calls `processNewImage()` or `processNewCanvas()`
-3. **OCR pipeline**: `ocr-pipeline.ts` tries canvas extraction first, then fetch, then URL-based background processing
-4. **Background batch**: `background.ts` queues OCR requests, batches them, sends to offscreen document for PaddleOCR inference
-5. **Result callback**: OCR result flows back via `onSuccess` callback → `renderImageOverlay()` / `renderCanvasOverlay()` creates DOM overlay
-6. **Overlay positioning**: `element-state.ts` ResizeObserver + rAF-scheduled batch updates keep overlays aligned with their target elements
-7. **Host communication**: `window.sendOcrToHost` / `window.removeOcrFromHost` allow external scripts to trigger or clear overlays
-8. **Asset caching**: `asset-cache.ts` intercepts fetch for model assets and caches them in IndexedDB, avoiding redundant downloads
-9. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
-10. **Extension settings**: `extension-settings.ts` centralizes settings retrieval and domain permission checking, eliminating duplication in `background.ts`
+1. **Content script activation**: `content.ts` runs automatically on all pages via manifest `<all_urls>` match. It only sets up message listeners and exposes `window.sendOcrToHost` / `window.removeOcrFromHost` — no auto-translation on load
+2. **User triggers translation**: Via popup (translating listed images/canvases) or context menu (`translate` message) — content script processes the specified elements on demand
+3. **New element added**: `dom-observer.ts` → `handleAddedNodes()` → calls `processNewImage()` or `processNewCanvas()`
+4. **OCR pipeline**: `ocr-pipeline.ts` tries canvas extraction first, then fetch, then URL-based background processing
+5. **Background batch**: `background.ts` queues OCR requests, batches them, sends to offscreen document for PaddleOCR inference
+6. **Result callback**: OCR result flows back via `onSuccess` callback → `renderImageOverlay()` / `renderCanvasOverlay()` creates DOM overlay
+7. **Overlay positioning**: `element-state.ts` ResizeObserver + rAF-scheduled batch updates keep overlays aligned with their target elements
+8. **Host communication**: `window.sendOcrToHost` / `window.removeOcrFromHost` allow external scripts to trigger or clear overlays
+9. **Asset caching**: `asset-cache.ts` intercepts fetch for model assets and caches them in IndexedDB, avoiding redundant downloads
+10. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
+11. **Extension settings**: `extension-settings.ts` centralizes settings retrieval and domain permission checking, eliminating duplication in `background.ts`
 
 ## Key Design Patterns
 
