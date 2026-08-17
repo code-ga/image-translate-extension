@@ -1,5 +1,27 @@
 # Changes Log
 
+## 2026-08-17 — Added OCR region grouping (convex hull + adjacency heuristics)
+
+**New file**: `utils/ocr-region-grouping.ts`
+**Modified**: `types/index.ts`, `utils/ocr-batcher.ts`, `utils/ocr-pipeline.ts`, `entrypoints/content.ts`, `utils/overlay.ts`
+
+Added a post-processing stage between PaddleOCR raw output and downstream consumers that groups individual OCR word/line boxes into larger logical text regions (`OCRRegion[]`).
+
+**Key changes**:
+- `types/index.ts`: Added `Point`, `OCRBox`, `OCRRegion` types; `OCRResult` now aliases `OCRBox[]`
+- `utils/ocr-region-grouping.ts`: Implements Andrew's monotone chain convex hull, adjacency heuristics (same-line and stacked-line detection with configurable ratios), connected component finding, reading-order sorting, and bounds computation
+- `utils/ocr-batcher.ts`: Maps PaddleOCR output to `OCRBox[]` with 4-corner polygons, then calls `groupOcrBoxesIntoRegions()` before returning
+- `utils/ocr-pipeline.ts`: Updated `onSuccess` callback types from `OCRResult` to `OCRRegion[]`
+- `entrypoints/content.ts`: Updated render functions to accept `OCRRegion[]` and flatten `region.boxes` before passing to `addOcrBoxes`
+- `utils/overlay.ts`: Updated `addOcrBoxes` parameter type from `OCRResult` to `OCRBox[]` with corrected property paths (`box.box.x/y/width/height`)
+
+**Preserved behavior**: Overlay rendering logic unchanged; only data shape upstream. `batchRecognize()` call and success/error wrappers unchanged.
+
+### Validation
+- `bun x tsc --noEmit` passes with no new type errors (only pre-existing `navigator.gpu` type errors in `ocr-batcher.ts`)
+
+---
+
 ## 2026-08-13 — Migrated content script from background-triggered to always-present
 
 **Removed**: `utils/script-injection.ts` (no longer needed)

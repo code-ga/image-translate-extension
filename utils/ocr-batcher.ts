@@ -1,7 +1,8 @@
 import ort from "onnxruntime-web";
 import { type PaddleOcrResult, PaddleOcrService, V6_SMALL_MODEL } from "ppu-paddle-ocr/web";
 import { MAX_CONCURRENT } from "@/config/ocr-config";
-import type { OCRResult } from "@/types";
+import type { OCRBox, OCRRegion } from "@/types";
+import { groupOcrBoxesIntoRegions } from "./ocr-region-grouping";
 
 type BatchOcrItem = {
 	fetchingType: "url" | "base64";
@@ -82,28 +83,35 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 		strategy: "per-box",
 	});
 
-	return results.map((result) => {
-		if (result.status === "fulfilled") {
-			const ocrData: OCRResult = (
-				result.value as PaddleOcrResult
-			).lines.flatMap((value) =>
-				value.flatMap((a) =>
-					a.text.length > 0
-						? [
-							{
-								text: a.text,
-								top: a.box.y,
-								left: a.box.x,
-								width: a.box.width,
-								height: a.box.height,
-							},
-						]
-						: [],
-				),
-			);
-			return { success: true, data: ocrData };
-		} else {
-			return { success: false, error: new String(result.reason) };
-		}
-	});
+ 	return results.map((result) => {
+ 		if (result.status === "fulfilled") {
+ 			const rawBoxes: OCRBox[] = (
+ 				result.value as PaddleOcrResult
+ 			).lines.flatMap((value) =>
+ 				value.flatMap((a) => {
+ 					if (a.text.length === 0) return [];
+ 					const x = a.box.x;
+ 					const y = a.box.y;
+ 					const width = a.box.width;
+ 					const height = a.box.height;
+ 					return [
+ 						{
+ 							text: a.text,
+ 							box: { x, y, width, height },
+ 							polygon: [
+ 								{ x, y },
+ 								{ x: x + width, y },
+ 								{ x: x + width, y: y + height },
+ 								{ x, y: y + height },
+ 							],
+ 						},
+ 					];
+ 				}),
+ 			);
+ 			const regions = groupOcrBoxesIntoRegions(rawBoxes);
+ 			return { success: true, data: regions };
+ 		} else {
+ 			return { success: false, error: new String(result.reason) };
+ 		}
+ 	});
 }

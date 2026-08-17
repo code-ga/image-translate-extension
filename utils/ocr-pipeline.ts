@@ -1,5 +1,5 @@
 import ResizeObserverPolyfill from "resize-observer-polyfill";
-import type { InternalMessageType, OCRResult } from "@/types";
+import type { InternalMessageType, OCRRegion } from "@/types";
 
 if (typeof window !== "undefined" && !window.ResizeObserver) {
 	window.ResizeObserver = ResizeObserverPolyfill;
@@ -95,7 +95,7 @@ function tryFetchBase64(src: string): Promise<string | null> {
 
 async function sendOcrWithBase64(
 	base64: string,
-	onSuccess: (ocrData: OCRResult) => void,
+	onSuccess: (ocrRegions: OCRRegion[]) => void,
 ) {
 	const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
 		action: "PROCESS_OCR",
@@ -109,7 +109,7 @@ async function sendOcrWithBase64(
 async function sendOcrWithUrl(
 	imageUrl: string,
 	headers: Record<string, string>,
-	onSuccess: (ocrData: OCRResult) => void,
+	onSuccess: (ocrRegions: OCRRegion[]) => void,
 ) {
 	const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
 		action: "PROCESS_OCR",
@@ -123,7 +123,7 @@ async function sendOcrWithUrl(
 
 async function processImage(
 	img: HTMLImageElement,
-	onSuccess: (ocrData: OCRResult) => void,
+	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onComplete: () => void,
 ) {
 	if (!img || !(img instanceof HTMLImageElement)) {
@@ -168,7 +168,7 @@ async function processImage(
 
 async function processCanvas(
 	canvas: HTMLCanvasElement,
-	onSuccess: (ocrData: OCRResult) => void,
+	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onComplete: () => void,
 ) {
 	try {

@@ -1,4 +1,4 @@
-import type { OCRResult } from "@/types";
+import type { OCRBox } from "@/types";
 
 export function getOrCreateOverlayContainer(): HTMLElement {
 	let container = document.getElementById("ocr-overlay-container");
@@ -35,21 +35,21 @@ export function addOcrBoxes(
 	overlay: HTMLElement,
 	elementWidth: number,
 	elementHeight: number,
-	ocrData: OCRResult,
+	ocrData: OCRBox[],
 ) {
 	for (const box of ocrData) {
 		const fontSize = Math.max(
 			10,
-			((Math.min(box.height, box.width) * box.width) / elementWidth) * 0.7,
+			((Math.min(box.box.height, box.box.width) * box.box.width) / elementWidth) * 0.7,
 		);
 		const boxDiv = document.createElement("div");
 		boxDiv.style.pointerEvents = "auto";
 		boxDiv.innerText = box.text;
 		boxDiv.style.position = "absolute";
-		boxDiv.style.top = `${(box.top / elementHeight) * 100}%`;
-		boxDiv.style.left = `${(box.left / elementWidth) * 100}%`;
-		boxDiv.style.width = `${(box.width / elementWidth) * 100}%`;
-		boxDiv.style.height = `${(box.height / elementHeight) * 100}%`;
+		boxDiv.style.top = `${(box.box.y / elementHeight) * 100}%`;
+		boxDiv.style.left = `${(box.box.x / elementWidth) * 100}%`;
+		boxDiv.style.width = `${(box.box.width / elementWidth) * 100}%`;
+		boxDiv.style.height = `${(box.box.height / elementHeight) * 100}%`;
 		boxDiv.style.border = "2px dashed #00ff00";
 		boxDiv.style.backgroundColor = "rgba(255, 255, 255, 1)";
 		boxDiv.style.color = "#00ff00";

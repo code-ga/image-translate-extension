@@ -1,6 +1,7 @@
 import type {
 	CompleteMessageType,
-	OCRResult,
+	OCRBox,
+	OCRRegion,
 	ProgressMessageType,
 } from "@/types";
 import { createElementState } from "@/utils/element-state";
@@ -16,7 +17,7 @@ import {
 const imageState = createElementState<HTMLImageElement>();
 const canvasState = createElementState<HTMLCanvasElement>();
 
-function renderImageOverlay(img: HTMLImageElement, ocrData: OCRResult) {
+function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
 	const currentSrc = img.currentSrc || img.src;
 
 	if (
@@ -30,7 +31,7 @@ function renderImageOverlay(img: HTMLImageElement, ocrData: OCRResult) {
 				existingOverlay,
 				img.naturalWidth,
 				img.naturalHeight,
-				ocrData,
+				ocrRegions.flatMap((r) => r.boxes),
 			);
 			updateElementOverlayPosition(img, existingOverlay);
 		}
@@ -48,7 +49,7 @@ function renderImageOverlay(img: HTMLImageElement, ocrData: OCRResult) {
 	overlay.style.position = "absolute";
 	overlay.style.pointerEvents = "none";
 
-	addOcrBoxes(overlay, img.naturalWidth, img.naturalHeight, ocrData);
+	addOcrBoxes(overlay, img.naturalWidth, img.naturalHeight, ocrRegions.flatMap((r) => r.boxes));
 	container.appendChild(overlay);
 	imageState.overlayMap.set(img, overlay);
 	updateElementOverlayPosition(img, overlay);
@@ -57,7 +58,7 @@ function renderImageOverlay(img: HTMLImageElement, ocrData: OCRResult) {
 	imageState.schedulePositionUpdate();
 }
 
-function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrData: OCRResult) {
+function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrRegions: OCRRegion[]) {
 	const canvasKey = canvas.toDataURL();
 
 	if (
@@ -67,7 +68,7 @@ function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrData: OCRResult) {
 		const existingOverlay = canvasState.overlayMap.get(canvas);
 		if (existingOverlay) {
 			clearOcrOverlays(existingOverlay);
-			addOcrBoxes(existingOverlay, canvas.width, canvas.height, ocrData);
+			addOcrBoxes(existingOverlay, canvas.width, canvas.height, ocrRegions.flatMap((r) => r.boxes));
 			updateElementOverlayPosition(canvas, existingOverlay);
 		}
 		return;
@@ -84,7 +85,7 @@ function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrData: OCRResult) {
 	overlay.style.position = "absolute";
 	overlay.style.pointerEvents = "none";
 
-	addOcrBoxes(overlay, canvas.width, canvas.height, ocrData);
+	addOcrBoxes(overlay, canvas.width, canvas.height, ocrRegions.flatMap((r) => r.boxes));
 	container.appendChild(overlay);
 	canvasState.overlayMap.set(canvas, overlay);
 	updateElementOverlayPosition(canvas, overlay);
@@ -184,10 +185,10 @@ function collectImageInfo() {
 	return images;
 }
 
-async function sendOcrToHost(src: string, ocrData: OCRResult) {
+async function sendOcrToHost(src: string, ocrRegions: OCRRegion[]) {
 	const img = findImageBySrc(src);
 	if (!img) return;
-	renderImageOverlay(img, ocrData);
+	renderImageOverlay(img, ocrRegions);
 }
 
 async function removeOcrFromHost(src: string) {

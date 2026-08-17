@@ -1,10 +1,18 @@
-export type OCRResult = {
+export type Point = { x: number; y: number };
+
+export type OCRBox = {
 	text: string;
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-}[];
+	box: { x: number; y: number; width: number; height: number };
+	polygon: Point[];
+};
+
+export type OCRRegion = {
+	text: string;
+	boxes: OCRBox[];
+	bounds: { top: number; left: number; width: number; height: number };
+};
+
+export type OCRResult = OCRBox[];
 export type InternalMessageType = {
 	action: "PROCESS_OCR";
 	fetchingType: "url" | "base64";

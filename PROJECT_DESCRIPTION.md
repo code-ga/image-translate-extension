@@ -21,9 +21,10 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | `utils/overlay.ts` | Shared overlay DOM creation, positioning, box rendering, and container management |
 | `utils/element-state.ts` | Generic element tracking (processing set, processed map, overlay map, mutation maps, resize observer) with lifecycle cleanup |
 | `utils/ocr-pipeline.ts` | Image URL resolution (srcset), canvas-to-base64, fetch-to-base64, and sending OCR jobs to background |
+| `utils/ocr-region-grouping.ts` | Spatial grouping of OCR word/line boxes into logical text regions using adjacency heuristics and convex hull |
 | `utils/dom-observer.ts` | Live MutationObserver for new DOM nodes, SPA URL change polling |
 | `utils/asset-cache.ts` | IndexedDB asset caching, cache URL validation, fetch wrapper installation |
-| `utils/ocr-batcher.ts` | PaddleOcrService model initialization and batch OCR execution |
+| `utils/ocr-batcher.ts` | PaddleOcrService model initialization, batch OCR execution, and region grouping |
 | `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking |
 | `utils/domain-matcher.ts` | URL domain/pattern matching for extension enablement rules |
 | `utils/constants.ts` | Shared constants (offscreen paths, message targets) |
@@ -33,7 +34,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | File | Role |
 |---|---|
 | `config/ocr-config.ts` | OCR batch size, concurrency, and debounce timing |
-| `types/index.ts` | All shared TypeScript types (OCRResult, message types, settings) |
+| `types/index.ts` | All shared TypeScript types (Point, OCRBox, OCRRegion, OCRResult, message types, settings) |
 | `wxt.config.ts` | WXT build configuration (manifest, permissions, CSP) |
 
 ## Feature Flow
@@ -43,12 +44,13 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 3. **New element added**: `dom-observer.ts` → `handleAddedNodes()` → calls `processNewImage()` or `processNewCanvas()`
 4. **OCR pipeline**: `ocr-pipeline.ts` tries canvas extraction first, then fetch, then URL-based background processing
 5. **Background batch**: `background.ts` queues OCR requests, batches them, sends to offscreen document for PaddleOCR inference
-6. **Result callback**: OCR result flows back via `onSuccess` callback → `renderImageOverlay()` / `renderCanvasOverlay()` creates DOM overlay
-7. **Overlay positioning**: `element-state.ts` ResizeObserver + rAF-scheduled batch updates keep overlays aligned with their target elements
-8. **Host communication**: `window.sendOcrToHost` / `window.removeOcrFromHost` allow external scripts to trigger or clear overlays
-9. **Asset caching**: `asset-cache.ts` intercepts fetch for model assets and caches them in IndexedDB, avoiding redundant downloads
-10. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
-11. **Extension settings**: `extension-settings.ts` centralizes settings retrieval and domain permission checking, eliminating duplication in `background.ts`
+6. **Region grouping**: `ocr-batcher.ts` converts raw PaddleOCR boxes to `OCRBox[]`, runs `groupOcrBoxesIntoRegions()` to produce `OCRRegion[]` with convex hull bounds and concatenated text
+7. **Result callback**: OCR regions flow back via `onSuccess` callback → `renderImageOverlay()` / `renderCanvasOverlay()` flattens region boxes and creates DOM overlay
+8. **Overlay positioning**: `element-state.ts` ResizeObserver + rAF-scheduled batch updates keep overlays aligned with their target elements
+9. **Host communication**: `window.sendOcrToHost` / `window.removeOcrFromHost` allow external scripts to trigger or clear overlays
+10. **Asset caching**: `asset-cache.ts` intercepts fetch for model assets and caches them in IndexedDB, avoiding redundant downloads
+11. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
+12. **Extension settings**: `extension-settings.ts` centralizes settings retrieval and domain permission checking, eliminating duplication in `background.ts`
 
 ## Key Design Patterns
 
