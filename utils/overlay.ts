@@ -17,7 +17,25 @@ export function updateElementOverlayPosition(
 	overlay: HTMLElement,
 ) {
 	const rect = element.getBoundingClientRect();
-	if (rect.width === 0 || rect.height === 0) {
+	const outOfViewport =
+		rect.right < 0 ||
+		rect.left > window.innerWidth ||
+		rect.bottom < 0 ||
+		rect.top > window.innerHeight;
+
+	let isOccluded = false;
+	if (rect.width > 0 && rect.height > 0 && !outOfViewport) {
+		const centerX = rect.left + rect.width / 2;
+		const centerY = rect.top + rect.height / 2;
+		const prevDisplay = overlay.style.display;
+		overlay.style.display = "none";
+		const topEl = document.elementFromPoint(centerX, centerY);
+		overlay.style.display = prevDisplay;
+		isOccluded =
+			!topEl || (!(element as Element).contains(topEl) && topEl !== element);
+	}
+
+	if (rect.width === 0 || rect.height === 0 || outOfViewport || isOccluded) {
 		overlay.style.display = "none";
 	} else {
 		const style = getComputedStyle(element as Element);
@@ -40,7 +58,9 @@ export function addOcrBoxes(
 	for (const box of ocrData) {
 		const fontSize = Math.max(
 			10,
-			((Math.min(box.box.height, box.box.width) * box.box.width) / elementWidth) * 0.7,
+			((Math.min(box.box.height, box.box.width) * box.box.width) /
+				elementWidth) *
+				0.7,
 		);
 		const boxDiv = document.createElement("div");
 		boxDiv.style.pointerEvents = "auto";

@@ -22,7 +22,8 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
 
 export async function isUrlAllowedInSettings(url: string): Promise<boolean> {
 	const settings = await getExtensionSettings();
+	console.log("Extension settings:", settings);
 	if (!settings.enabled) return false;
 	const enabledDomains = settings.enabledDomains;
-	return enabledDomains.length === 0 || isUrlAllowed(url, enabledDomains);
+	return isUrlAllowed(url, enabledDomains);
 }
