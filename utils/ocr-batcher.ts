@@ -83,35 +83,36 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 		strategy: "per-box",
 	});
 
- 	return results.map((result) => {
- 		if (result.status === "fulfilled") {
- 			const rawBoxes: OCRBox[] = (
- 				result.value as PaddleOcrResult
- 			).lines.flatMap((value) =>
- 				value.flatMap((a) => {
- 					if (a.text.length === 0) return [];
- 					const x = a.box.x;
- 					const y = a.box.y;
- 					const width = a.box.width;
- 					const height = a.box.height;
- 					return [
- 						{
- 							text: a.text,
- 							box: { x, y, width, height },
- 							polygon: [
- 								{ x, y },
- 								{ x: x + width, y },
- 								{ x: x + width, y: y + height },
- 								{ x, y: y + height },
- 							],
- 						},
- 					];
- 				}),
- 			);
- 			const regions = groupOcrBoxesIntoRegions(rawBoxes);
- 			return { success: true, data: regions };
- 		} else {
- 			return { success: false, error: new String(result.reason) };
- 		}
- 	});
+	return results.map((result) => {
+		if (result.status === "fulfilled") {
+			const rawBoxes: OCRBox[] = (
+				result.value as PaddleOcrResult
+			).lines.flatMap((value) =>
+				value.flatMap((a) => {
+					if (a.text.length === 0) return [];
+					const x = a.box.x;
+					const y = a.box.y;
+					const width = a.box.width;
+					const height = a.box.height;
+					return [
+						{
+							text: a.text,
+							box: { x, y, width, height },
+							polygon: [
+								{ x, y },
+								{ x: x + width, y },
+								{ x: x + width, y: y + height },
+								{ x, y: y + height },
+							],
+						},
+					];
+				}),
+			);
+			console.log(rawBoxes)
+			const regions = groupOcrBoxesIntoRegions(rawBoxes);
+			return { success: true, data: regions };
+		} else {
+			return { success: false, error: new String(result.reason) };
+		}
+	});
 }

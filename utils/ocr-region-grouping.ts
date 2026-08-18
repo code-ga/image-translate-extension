@@ -96,6 +96,7 @@ function isStacked(a: OCRBox, b: OCRBox, avgHeight: number): boolean {
 }
 
 function areAdjacent(a: OCRBox, b: OCRBox, avgHeight: number): boolean {
+	console.log(`Checking adjacency between boxes: ${a.text} and ${b.text}`, isSameLine(a, b, avgHeight), isStacked(a, b, avgHeight));
 	return isSameLine(a, b, avgHeight) || isStacked(a, b, avgHeight);
 }
 
@@ -135,6 +136,7 @@ function findComponents(adj: boolean[][]): number[][] {
 		}
 		components.push(component);
 	}
+	console.log(components)
 	return components;
 }
 

@@ -1,5 +1,22 @@
 # Changes Log
 
+## 2026-08-18 — Restored auto-translate on page load and SPA navigation
+
+**Modified**: `entrypoints/content.ts`
+
+Restored automatic image and canvas translation that triggers when the page loads or the URL changes (including SPA navigation). The extension now checks settings and domain permissions and processes all matching images/canvases automatically.
+
+**Key changes**:
+- `entrypoints/content.ts`: Added `autoTranslateIfAllowed()` function that retrieves extension settings, verifies the current URL is allowed, and processes all images and canvases on the page
+- Added URL polling via `startUrlPolling` to detect SPA navigation and URL changes, triggering `autoTranslateIfAllowed()` when the href changes
+- Added `settings-changed` message handler that re-triggers auto-translation when the user updates settings in the popup
+- Added live DOM observer (`startLiveObserver`) that automatically processes new images and canvases added to the DOM after initial load
+
+### Validation
+- `bun x tsc --noEmit` passes with no new type errors (only pre-existing `navigator.gpu` errors in `ocr-batcher.ts`)
+
+---
+
 ## 2026-08-17 — Added OCR region grouping (convex hull + adjacency heuristics)
 
 **New file**: `utils/ocr-region-grouping.ts`

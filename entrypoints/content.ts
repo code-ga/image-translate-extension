@@ -13,6 +13,8 @@ import {
 	removeOverlay,
 	updateElementOverlayPosition,
 } from "@/utils/overlay";
+import { getExtensionSettings, isUrlAllowedInSettings } from "@/utils/extension-settings";
+import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
 
 const imageState = createElementState<HTMLImageElement>();
 const canvasState = createElementState<HTMLCanvasElement>();
@@ -148,6 +150,54 @@ function findCanvasByIndex(index: number): HTMLCanvasElement | null {
 	return canvases[index] || null;
 }
 
+let liveObserver: MutationObserver | null = null;
+
+async function autoTranslateIfAllowed() {
+	const settings = await getExtensionSettings();
+	if (!settings.enabled) return;
+
+	const tabUrl = window.location.href;
+	if (!isUrlAllowedInSettings(tabUrl)) return;
+
+	if (liveObserver) {
+		liveObserver.disconnect();
+	}
+
+	for (const img of Array.from(document.images)) {
+		const width = img.naturalWidth || img.width || 0;
+		const height = img.naturalHeight || img.height || 0;
+		if (width < 30 || height < 30) continue;
+		const style = getComputedStyle(img);
+		if (
+			style.display === "none" ||
+			style.visibility === "hidden" ||
+			style.opacity === "0"
+		)
+			continue;
+		processNewImage(img);
+	}
+
+	for (let i = 0; i < document.querySelectorAll("canvas").length; i++) {
+		const canvas = document.querySelectorAll("canvas")[i];
+		const width = canvas.width || 0;
+		const height = canvas.height || 0;
+		if (width < 30 || height < 30) continue;
+		const style = getComputedStyle(canvas);
+		if (
+			style.display === "none" ||
+			style.visibility === "hidden" ||
+			style.opacity === "0"
+		)
+			continue;
+		processNewCanvas(canvas);
+	}
+
+	liveObserver = startLiveObserver(
+		(img) => processNewImage(img),
+		(canvas) => processNewCanvas(canvas),
+	);
+}
+
 function collectImageInfo() {
 	const images: {
 		src: string;
@@ -206,7 +256,17 @@ interface ContextMenuContext {
 }
 export default defineContentScript({
 	matches: ["<all_urls>"],
+	allFrames: true,
+	runAt: "document_idle",
 	main() {
+		console.log("Content script loaded for URL:", window.location.href);
+		autoTranslateIfAllowed();
+
+		const urlPolling = startUrlPolling(() => {
+			autoTranslateIfAllowed();
+		});
+		urlPolling.start();
+
 		(
 			window as unknown as {
 				sendOcrToHost: typeof sendOcrToHost;
@@ -264,6 +324,10 @@ export default defineContentScript({
 			if (msg.type === "translate-canvases") {
 				handleTranslateCanvases(msg.indices);
 				return true;
+			}
+
+			if (msg.type === "settings-changed") {
+				autoTranslateIfAllowed();
 			}
 
 			if (msg.type !== "translate") return;
