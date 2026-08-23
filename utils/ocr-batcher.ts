@@ -64,9 +64,15 @@ export async function initOcrModel(): Promise<PaddleOcrService> {
 	return ocrModelInstance;
 }
 
-export async function runBatchOcr(items: BatchOcrItem[]) {
+type RunBatchResultItem = { success: true; data: OCRRegion[] } | { success: false; error: string }
+export async function runBatchOcr(items: BatchOcrItem[]): Promise<RunBatchResultItem[]> {
+	if ("TextDetector" in window) {
+		console.log(window.TextDetector);
+	}
 	const model = await initOcrModel();
-	const imageBuffers = items.map((item) => base64ToArrayBuffer(item.imageData));
+	const imageBuffers = items.map((item) =>
+		base64ToArrayBuffer(item.imageData),
+	);
 
 	console.log(`Running batch OCR on ${imageBuffers.length} images...`);
 	const results = await model.batchRecognize(imageBuffers, {
@@ -74,7 +80,7 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 		strategy: "per-box",
 	});
 
-	return results.map((result) => {
+	return results.map((result): RunBatchResultItem => {
 		if (result.status === "fulfilled") {
 			const rawBoxes: OCRBox[] = (
 				result.value as PaddleOcrResult
@@ -99,12 +105,11 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 					];
 				}),
 			);
-			console.log(rawBoxes)
 			const regions = groupOcrBoxesIntoRegions(rawBoxes);
 			console.log(`OCR completed. Found ${regions.length} regions.`, regions);
 			return { success: true, data: regions };
 		} else {
-			return { success: false, error: new String(result.reason) };
+			return { success: false, error: `${new String(result.reason)}` };
 		}
 	});
 }
