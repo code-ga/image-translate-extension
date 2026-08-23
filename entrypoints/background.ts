@@ -35,8 +35,8 @@ export default defineBackground({
 			const tabUrl = tab.url || "";
 			const isAllowed =
 				settings.enabled &&
-				(settings.enabledDomains.length === 0 ||
-					isUrlAllowed(tabUrl, settings.enabledDomains));
+				settings.enabledDomains.length > 0 &&
+				isUrlAllowed(tabUrl, settings.enabledDomains);
 			if (!isAllowed) return;
 
 			browser.tabs

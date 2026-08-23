@@ -160,7 +160,7 @@ function App() {
 
 	const isDomainAllowed = (href: string): boolean => {
 		if (!globalEnabled) return false;
-		if (enabledDomains.length === 0) return true;
+		if (enabledDomains.length === 0) return false;
 		return isUrlAllowed(href || "", enabledDomains);
 	};
 
@@ -350,11 +350,11 @@ function App() {
 					<div className="setting-item">
 						<div className="setting-label">
 							<span className="setting-title">Allowed Domains</span>
-							<span className="setting-desc">
-								{enabledDomains.length === 0
-									? "All domains translate when enabled"
-									: `Translation active for ${enabledDomains.length} domain(s)`}
-							</span>
+						<span className="setting-desc">
+							{enabledDomains.length === 0
+								? "No domains configured"
+								: `Translation active for ${enabledDomains.length} domain(s)`}
+						</span>
 						</div>
 					</div>
 

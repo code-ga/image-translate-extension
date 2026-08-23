@@ -136,7 +136,6 @@ function findComponents(adj: boolean[][]): number[][] {
 		}
 		components.push(component);
 	}
-	console.log(components)
 	return components;
 }
 

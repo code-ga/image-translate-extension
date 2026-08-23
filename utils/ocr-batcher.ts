@@ -13,11 +13,6 @@ type BatchOcrItem = {
 ort.env.wasm.wasmPaths = browser.runtime.getURL("onnx/" as any);
 // ort.env.wasm.numThreads = 1;
 
-console.log("Web gpu", ort.env.webgpu)
-console.log("Web gl", ort.env.webgl)
-console.log("wasm", ort.env.wasm)
-console.log("navigator gpu", navigator.gpu)
-
 let ocrModelInstance: PaddleOcrService | null = null;
 
 function base64ToArrayBuffer(base64: string) {
@@ -63,10 +58,6 @@ export async function initOcrModel(): Promise<PaddleOcrService> {
 		},
 	});
 	await ocrModelInstance.initialize();
-	console.log("Web gpu", ort.env.webgpu)
-	console.log("Web gl", ort.env.webgl)
-	console.log("wasm", ort.env.wasm)
-	console.log("navigator gpu", navigator.gpu)
 
 
 	console.log("Model successfully fetched and cached in memory!");
@@ -110,6 +101,7 @@ export async function runBatchOcr(items: BatchOcrItem[]) {
 			);
 			console.log(rawBoxes)
 			const regions = groupOcrBoxesIntoRegions(rawBoxes);
+			console.log(`OCR completed. Found ${regions.length} regions.`, regions);
 			return { success: true, data: regions };
 		} else {
 			return { success: false, error: new String(result.reason) };

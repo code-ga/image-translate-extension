@@ -1,5 +1,20 @@
 # Changes Log
 
+## 2026-08-18 — Fixed empty enabled-domains list behavior
+
+**Modified**: `entrypoints/background.ts`, `entrypoints/popup/App.tsx`
+
+When the enabled domains list is empty, the extension should NOT translate any page. Previously, an empty list was treated as "allow all pages" in the context menu handler and popup UI.
+
+**Key changes**:
+- `entrypoints/background.ts`: Context menu now requires `enabledDomains.length > 0` before checking URL match
+- `entrypoints/popup/App.tsx`: `isDomainAllowed` now returns `false` when the list is empty; updated UI text from "All domains translate when enabled" to "No domains configured"
+
+### Validation
+- `bun x tsc --noEmit` passes with no new type errors (only pre-existing `navigator.gpu` errors in `ocr-batcher.ts`)
+
+---
+
 ## 2026-08-18 — Restored auto-translate on page load and SPA navigation
 
 **Modified**: `entrypoints/content.ts`
