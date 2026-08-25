@@ -69,22 +69,39 @@ export default defineBackground({
 				return true;
 			}
 
-			if (msg.type === "notify-settings-changed") {
-				browser.tabs.query({}, (tabs) => {
-					for (const tab of tabs) {
-						if (tab.id) {
-							browser.tabs
-								.sendMessage(tab.id, {
-									type: "settings-changed",
-									settings: msg.settings,
-								})
-								.catch(() => {});
-						}
+		if (msg.type === "notify-settings-changed") {
+			browser.tabs.query({}, (tabs) => {
+				for (const tab of tabs) {
+					if (tab.id) {
+						browser.tabs
+							.sendMessage(tab.id, {
+								type: "settings-changed",
+								settings: msg.settings,
+							})
+							.catch(() => {});
 					}
-				});
-				sendResponse({ ok: true });
-				return true;
-			}
+				}
+			});
+			sendResponse({ ok: true });
+			return true;
+		}
+
+		if (msg.type === "extension-error") {
+			browser.tabs.query({}, (tabs) => {
+				for (const tab of tabs) {
+					if (tab.id) {
+						browser.tabs
+							.sendMessage(tab.id, {
+								type: "extension-error",
+								error: msg.error,
+							})
+							.catch(() => {});
+					}
+				}
+			});
+			sendResponse({ ok: true });
+			return true;
+		}
 		});
 	},
 });

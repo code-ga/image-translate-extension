@@ -96,6 +96,7 @@ function tryFetchBase64(src: string): Promise<string | null> {
 async function sendOcrWithBase64(
 	base64: string,
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
+	onError: (error: string | Error) => void,
 ) {
 	const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
 		action: "PROCESS_OCR",
@@ -103,13 +104,18 @@ async function sendOcrWithBase64(
 		imageData: base64,
 	});
 
-	bgResponse?.success && onSuccess(bgResponse.ocrData);
+	if (bgResponse?.success && bgResponse.ocrData) {
+		onSuccess(bgResponse.ocrData);
+	} else {
+		onError(bgResponse?.error ?? "OCR processing failed");
+	}
 }
 
 async function sendOcrWithUrl(
 	imageUrl: string,
 	headers: Record<string, string>,
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
+	onError: (error: string | Error) => void,
 ) {
 	const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
 		action: "PROCESS_OCR",
@@ -118,13 +124,18 @@ async function sendOcrWithUrl(
 		headers,
 	});
 
-	bgResponse?.success && onSuccess(bgResponse.ocrData);
+	if (bgResponse?.success && bgResponse.ocrData) {
+		onSuccess(bgResponse.ocrData);
+	} else {
+		onError(bgResponse?.error ?? "OCR processing failed");
+	}
 }
 
 async function processImage(
 	img: HTMLImageElement,
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onComplete: () => void,
+	onError: (error: string | Error) => void,
 ) {
 	if (!img || !(img instanceof HTMLImageElement)) {
 		console.error("Image not found");
@@ -135,7 +146,7 @@ async function processImage(
 	try {
 		let base64 = await tryCanvasBase64(img);
 		if (base64) {
-			await sendOcrWithBase64(base64, onSuccess);
+			await sendOcrWithBase64(base64, onSuccess, onError);
 			onComplete();
 			return;
 		}
@@ -143,7 +154,7 @@ async function processImage(
 		const imageUrl = resolveBestImageUrl(img);
 		base64 = await tryFetchBase64(imageUrl);
 		if (base64) {
-			await sendOcrWithBase64(base64, onSuccess);
+			await sendOcrWithBase64(base64, onSuccess, onError);
 			onComplete();
 			return;
 		}
@@ -158,10 +169,14 @@ async function processImage(
 				Referer: window.location.href,
 			},
 			onSuccess,
+			onError,
 		);
 		onComplete();
 	} catch (error) {
 		console.error("Failed to extract or pass image text:", error);
+		onError(
+			error instanceof Error ? error : "Failed to extract or pass image text",
+		);
 		onComplete();
 	}
 }
@@ -170,6 +185,7 @@ async function processCanvas(
 	canvas: HTMLCanvasElement,
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onComplete: () => void,
+	onError: (error: string | Error) => void,
 ) {
 	try {
 		const base64 = canvas.toDataURL("image/png");
@@ -179,9 +195,16 @@ async function processCanvas(
 			imageData: base64,
 		});
 
-		bgResponse?.success && onSuccess(bgResponse.ocrData);
+		if (bgResponse?.success && bgResponse.ocrData) {
+			onSuccess(bgResponse.ocrData);
+		} else {
+			onError(bgResponse?.error ?? "OCR processing failed");
+		}
 	} catch (error) {
 		console.error("Failed to translate canvas:", error);
+		onError(
+			error instanceof Error ? error : "Failed to translate canvas",
+		);
 	} finally {
 		onComplete();
 	}

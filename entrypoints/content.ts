@@ -1,5 +1,6 @@
 import type {
 	CompleteMessageType,
+	ExtensionErrorType,
 	OCRBox,
 	OCRRegion,
 	ProgressMessageType,
@@ -14,6 +15,7 @@ import {
 	updateElementOverlayPosition,
 } from "@/utils/overlay";
 import { getExtensionSettings, isUrlAllowedInSettings } from "@/utils/extension-settings";
+import { showToast } from "@/utils/toast";
 import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
 
 const imageState = createElementState<HTMLImageElement>();
@@ -120,6 +122,18 @@ function processNewImage(img: HTMLImageElement) {
 		() => {
 			imageState.processingSet.delete(img);
 		},
+		(error) => {
+			showToast(
+				error instanceof Error ? error.message : error,
+				"error",
+			);
+			browser.runtime
+				.sendMessage<ExtensionErrorType>({
+					type: "extension-error",
+					error: error instanceof Error ? error.message : error,
+				})
+				.catch(() => {});
+		},
 	);
 }
 
@@ -134,6 +148,18 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 		},
 		() => {
 			canvasState.processingSet.delete(canvas);
+		},
+		(error) => {
+			showToast(
+				error instanceof Error ? error.message : error,
+				"error",
+			);
+			browser.runtime
+				.sendMessage<ExtensionErrorType>({
+					type: "extension-error",
+					error: error instanceof Error ? error.message : error,
+				})
+				.catch(() => {});
 		},
 	);
 }

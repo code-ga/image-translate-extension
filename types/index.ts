@@ -4,6 +4,7 @@ export type OCRBox = {
 	text: string;
 	box: { x: number; y: number; width: number; height: number };
 	polygon: Point[];
+	translation?: string
 };
 
 export type OCRRegion = {
@@ -114,4 +115,9 @@ export type ImageStatusResponse = {
 export type CanvasStatusResponse = {
 	type: "canvas-status-list";
 	canvases: CanvasInfoWithStatus[];
+};
+
+export type ExtensionErrorType = {
+	type: "extension-error";
+	error: string;
 };

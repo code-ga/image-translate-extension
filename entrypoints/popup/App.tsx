@@ -24,7 +24,7 @@ function App() {
 	const [tab, setTab] = useState<Tab>("images");
 	const [images, setImages] = useState<ImageInfo[]>([]);
 	const [canvases, setCanvases] = useState<CanvasInfo[]>([]);
-	const [error, _setError] = useState<string>("");
+	const [error, setError] = useState<string>("");
 	const [enabledDomains, setEnabledDomains] = useState<DomainPattern[]>([]);
 	const [globalEnabled, setGlobalEnabled] = useState(true);
 	const [domainInput, setDomainInput] = useState("");
@@ -147,7 +147,14 @@ function App() {
 				msg.type === "translate-images-complete" ||
 				msg.type === "translate-images-progress"
 			) {
+				if (msg.error) {
+					setError(msg.error);
+				}
 				pollPageData();
+			}
+
+			if (msg.type === "extension-error") {
+				setError(msg.error);
 			}
 		};
 
@@ -157,6 +164,12 @@ function App() {
 			browser.runtime.onMessage.removeListener(progressListener);
 		};
 	}, [loadSettings, pollPageData, tab]);
+
+	useEffect(() => {
+		if (!error) return;
+		const timer = setTimeout(() => setError(""), 6000);
+		return () => clearTimeout(timer);
+	}, [error]);
 
 	const isDomainAllowed = (href: string): boolean => {
 		if (!globalEnabled) return false;

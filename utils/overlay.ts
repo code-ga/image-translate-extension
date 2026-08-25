@@ -1,4 +1,4 @@
-import type { OCRBox } from "@/types";
+import type { InternalMessageType, OCRBox } from "@/types";
 
 export function getOrCreateOverlayContainer(): HTMLElement {
 	let container = document.getElementById("ocr-overlay-container");
@@ -60,9 +60,16 @@ export function addOcrBoxes(
 			10,
 			((Math.min(box.box.height, box.box.width) * box.box.width) /
 				elementWidth) *
-				0.7,
+			0.7,
 		);
 		const boxDiv = document.createElement("div");
+		boxDiv.addEventListener("focus", async e => {
+			e.preventDefault()
+			console.log(ocrData, e)
+			// const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
+			// 	});
+			
+		})
 		boxDiv.style.pointerEvents = "auto";
 		boxDiv.innerText = box.text;
 		boxDiv.style.position = "absolute";
