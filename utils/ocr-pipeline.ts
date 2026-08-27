@@ -1,5 +1,5 @@
 import ResizeObserverPolyfill from "resize-observer-polyfill";
-import type { InternalMessageType, OCRRegion } from "@/types";
+import type { OCRRegion, ProcessOcrMessage } from "@/types";
 
 if (typeof window !== "undefined" && !window.ResizeObserver) {
 	window.ResizeObserver = ResizeObserverPolyfill;
@@ -98,11 +98,13 @@ async function sendOcrWithBase64(
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onError: (error: string | Error) => void,
 ) {
-	const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
-		action: "PROCESS_OCR",
+	const bgResponse = await browser.runtime.sendMessage({
+		from: "content",
+		to: "background",
+		type: "ocr/process",
 		fetchingType: "base64",
 		imageData: base64,
-	});
+	} satisfies ProcessOcrMessage);
 
 	if (bgResponse?.success && bgResponse.ocrData) {
 		onSuccess(bgResponse.ocrData);
@@ -117,12 +119,14 @@ async function sendOcrWithUrl(
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onError: (error: string | Error) => void,
 ) {
-	const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
-		action: "PROCESS_OCR",
+	const bgResponse = await browser.runtime.sendMessage({
+		from: "content",
+		to: "background",
+		type: "ocr/process",
 		fetchingType: "url",
 		imageData: imageUrl,
 		headers,
-	});
+	} satisfies ProcessOcrMessage);
 
 	if (bgResponse?.success && bgResponse.ocrData) {
 		onSuccess(bgResponse.ocrData);
@@ -189,11 +193,13 @@ async function processCanvas(
 ) {
 	try {
 		const base64 = canvas.toDataURL("image/png");
-		const bgResponse = await browser.runtime.sendMessage<InternalMessageType>({
-			action: "PROCESS_OCR",
+		const bgResponse = await browser.runtime.sendMessage({
+			from: "content",
+			to: "background",
+			type: "ocr/process",
 			fetchingType: "base64",
 			imageData: base64,
-		});
+		} satisfies ProcessOcrMessage);
 
 		if (bgResponse?.success && bgResponse.ocrData) {
 			onSuccess(bgResponse.ocrData);

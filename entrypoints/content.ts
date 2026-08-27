@@ -1,9 +1,12 @@
 import type {
-	CompleteMessageType,
-	ExtensionErrorType,
+	AppMessage,
+	CanvasInfoWithStatus,
+	ExtensionErrorMessage,
+	ImageInfoWithStatus,
 	OCRBox,
 	OCRRegion,
-	ProgressMessageType,
+	TranslateCompleteMessage,
+	TranslateProgressMessage,
 } from "@/types";
 import { createElementState } from "@/utils/element-state";
 import { processCanvas, processImage } from "@/utils/ocr-pipeline";
@@ -128,8 +131,10 @@ function processNewImage(img: HTMLImageElement) {
 				"error",
 			);
 			browser.runtime
-				.sendMessage<ExtensionErrorType>({
-					type: "extension-error",
+				.sendMessage({
+					from: "content",
+					to: "background",
+					type: "extension/error",
 					error: error instanceof Error ? error.message : error,
 				})
 				.catch(() => {});
@@ -155,8 +160,10 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 				"error",
 			);
 			browser.runtime
-				.sendMessage<ExtensionErrorType>({
-					type: "extension-error",
+				.sendMessage({
+					from: "content",
+					to: "background",
+					type: "extension/error",
 					error: error instanceof Error ? error.message : error,
 				})
 				.catch(() => {});
@@ -224,14 +231,8 @@ async function autoTranslateIfAllowed() {
 	);
 }
 
-function collectImageInfo() {
-	const images: {
-		src: string;
-		currentSrc: string;
-		width: number;
-		height: number;
-		status: string;
-	}[] = [];
+function collectImageInfo(): ImageInfoWithStatus[] {
+	const images: ImageInfoWithStatus[] = [];
 
 	for (const img of Array.from(document.images)) {
 		const width = img.naturalWidth || img.width || 0;
@@ -304,9 +305,9 @@ export default defineContentScript({
 		).removeOcrFromHost = removeOcrFromHost;
 
 		window.addEventListener("scroll", imageState.schedulePositionUpdate, true);
-		window.addEventListener("resize", imageState.schedulePositionUpdate);
+		window.addEventListener("resize", imageState.schedulePositionUpdate, true);
 		window.addEventListener("scroll", canvasState.schedulePositionUpdate, true);
-		window.addEventListener("resize", canvasState.schedulePositionUpdate);
+		window.addEventListener("resize", canvasState.schedulePositionUpdate, true);
 		let currentContext: ContextMenuContext | null = null;
 
 		document.addEventListener("contextmenu", (e) => {
@@ -318,50 +319,40 @@ export default defineContentScript({
 			};
 		});
 
-		browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-			if (msg.type === "get-images") {
-				sendResponse({ type: "images-list", images: collectImageInfo() });
-				return true;
-			}
-
-			if (msg.type === "get-image-status") {
-				sendResponse({ type: "image-status-list", images: collectImageInfo() });
-				return true;
-			}
-
-			if (msg.type === "get-canvases") {
-				sendResponse({ type: "canvas-list", canvases: collectCanvasInfo() });
-				return true;
-			}
-
-			if (msg.type === "get-canvas-status") {
-				sendResponse({
-					type: "canvas-status-list",
-					canvases: collectCanvasInfo(),
-				});
-				return true;
-			}
-
-			if (msg.type === "translate-images") {
-				handleTranslateImages(msg.urls, currentContext);
-				return true;
-			}
-
-			if (msg.type === "translate-canvases") {
-				handleTranslateCanvases(msg.indices);
-				return true;
-			}
-
-			if (msg.type === "settings-changed") {
-				autoTranslateIfAllowed();
-			}
-
-			if (msg.type !== "translate") return;
-			console.log("translate message received in content script", msg);
-			const escapedUrl = msg.url.replace(/"/g, '\\"');
-			for (const img of Array.from(document.images)) {
-				if (img.currentSrc === escapedUrl || img.src === escapedUrl) {
-					processNewImage(img);
+		browser.runtime.onMessage.addListener((msg: AppMessage, _sender, sendResponse) => {
+			switch (msg.type) {
+				case "ui/get-images":
+					sendResponse({ type: "ui/images-list", images: collectImageInfo() });
+					return true;
+				case "ui/get-image-status":
+					sendResponse({ type: "ui/image-status-list", images: collectImageInfo() });
+					return true;
+				case "ui/get-canvases":
+					sendResponse({ type: "ui/canvas-list", canvases: collectCanvasInfo() });
+					return true;
+				case "ui/get-canvas-status":
+					sendResponse({
+						type: "ui/canvas-status-list",
+						canvases: collectCanvasInfo(),
+					});
+					return true;
+				case "translate/images":
+					handleTranslateImages(msg.urls, currentContext);
+					return true;
+				case "translate/canvases":
+					handleTranslateCanvases(msg.indices);
+					return true;
+				case "settings/changed":
+					autoTranslateIfAllowed();
+					break;
+				case "background/translate": {
+					const escapedUrl = msg.url.replace(/"/g, '\\"');
+					for (const img of Array.from(document.images)) {
+						if (img.currentSrc === escapedUrl || img.src === escapedUrl) {
+							processNewImage(img);
+						}
+					}
+					break;
 				}
 			}
 		});
@@ -391,20 +382,24 @@ async function handleTranslateImages(urls: string[], currentContext?: ContextMen
 		}
 
 		if (i < total - 1) {
-			browser.runtime.sendMessage<ProgressMessageType>({
-				type: "translate-images-progress",
+			browser.runtime.sendMessage({
+				from: "content",
+				to: "background",
+				type: "translate/progress",
 				url,
 				index: i + 1,
 				total,
 				success: !!img,
 				error: img ? undefined : "Image not found in DOM",
-			});
+			} satisfies TranslateProgressMessage);
 		} else {
-			browser.runtime.sendMessage<CompleteMessageType>({
-				type: "translate-images-complete",
+			browser.runtime.sendMessage({
+				from: "content",
+				to: "background",
+				type: "translate/complete",
 				total,
 				successCount,
-			});
+			} satisfies TranslateCompleteMessage);
 		}
 	}
 }
@@ -422,36 +417,30 @@ async function handleTranslateCanvases(indices: number[]) {
 		}
 
 		if (i < total - 1) {
-			browser.runtime.sendMessage<ProgressMessageType>({
-				type: "translate-images-progress",
+			browser.runtime.sendMessage({
+				from: "content",
+				to: "background",
+				type: "translate/progress",
 				url: `canvas:${index}`,
 				index: i + 1,
 				total,
 				success: !!canvas,
 				error: canvas ? undefined : "Canvas not found in DOM",
-			});
+			} satisfies TranslateProgressMessage);
 		} else {
-			browser.runtime.sendMessage<CompleteMessageType>({
-				type: "translate-images-complete",
+			browser.runtime.sendMessage({
+				from: "content",
+				to: "background",
+				type: "translate/complete",
 				total,
 				successCount,
-			});
+			} satisfies TranslateCompleteMessage);
 		}
 	}
 }
 
-function collectCanvasInfo(): {
-	index: number;
-	width: number;
-	height: number;
-	status: string;
-}[] {
-	const canvases: {
-		index: number;
-		width: number;
-		height: number;
-		status: string;
-	}[] = [];
+function collectCanvasInfo(): CanvasInfoWithStatus[] {
+	const canvases: CanvasInfoWithStatus[] = [];
 
 	for (let i = 0; i < document.querySelectorAll("canvas").length; i++) {
 		const canvas = document.querySelectorAll("canvas")[i];

@@ -1,9 +1,15 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
-import type { InternalMessageType } from "@/types";
+import type {
+	AppMessage,
+	ProcessOcrMessage,
+	TranslateTextMessage,
+	TranslateTextResponse,
+} from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { getExtensionSettings } from "@/utils/extension-settings";
+import { translateDynamic } from "@/utils/translation";
 
 export default defineBackground({
 	type: "module",
@@ -22,7 +28,7 @@ export default defineBackground({
 		browser.runtime.onInstalled.addListener(() => {
 			browser.contextMenus.create({
 				id: "translate-image",
-				title: "X\u1eed l\u00fd ph\u1ea7n t\u01b0\u1eddng n\xE0y",
+				title: "Xử lý phần tường này",
 				contexts: ["all"],
 			});
 		});
@@ -41,7 +47,9 @@ export default defineBackground({
 
 			browser.tabs
 				.sendMessage(tab.id, {
-					type: "translate",
+					from: "background",
+					to: "content",
+					type: "background/translate",
 					url: info.srcUrl,
 				})
 				.catch(() => {});
@@ -52,62 +60,63 @@ export default defineBackground({
 		});
 
 		browser.runtime.onMessage.addListener(
-			(msg: InternalMessageType, _sender, sendResponse) => {
-				if (msg.action === "PROCESS_OCR") {
-					ocrBatchQueue.push({ msg, sendResponse });
-					scheduleBatchFlush();
-					return true;
+			(msg: AppMessage, _sender, sendResponse) => {
+				switch (msg.type) {
+					case "ocr/process":
+						ocrBatchQueue.push({ msg, sendResponse });
+						scheduleBatchFlush();
+						return true;
+					case "settings/get":
+						getExtensionSettings().then((settings) => {
+							sendResponse(settings);
+						});
+						return true;
+					case "settings/notify-changed":
+						browser.tabs.query({}, (tabs) => {
+							for (const tab of tabs) {
+								if (tab.id) {
+									browser.tabs
+										.sendMessage(tab.id, {
+											from: "background",
+											to: "all",
+											type: "settings/changed",
+											settings: msg.settings,
+										})
+										.catch(() => {});
+								}
+							}
+						});
+						sendResponse({ ok: true });
+						return true;
+					case "extension/error":
+						browser.tabs.query({}, (tabs) => {
+							for (const tab of tabs) {
+								if (tab.id) {
+									browser.tabs
+										.sendMessage(tab.id, {
+											from: "background",
+											to: "all",
+											type: "extension/error",
+											error: msg.error,
+										})
+										.catch(() => {});
+								}
+							}
+						});
+						sendResponse({ ok: true });
+						return true;
+					case "translate/text": {
+						enqueueTranslation(msg.text, msg.srcLang, msg.targetLang, sendResponse);
+						return true;
+					}
 				}
 			},
 		);
-
-		browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-			if (msg.type === "get-settings") {
-				getExtensionSettings().then((settings) => {
-					sendResponse(settings);
-				});
-				return true;
-			}
-
-		if (msg.type === "notify-settings-changed") {
-			browser.tabs.query({}, (tabs) => {
-				for (const tab of tabs) {
-					if (tab.id) {
-						browser.tabs
-							.sendMessage(tab.id, {
-								type: "settings-changed",
-								settings: msg.settings,
-							})
-							.catch(() => {});
-					}
-				}
-			});
-			sendResponse({ ok: true });
-			return true;
-		}
-
-		if (msg.type === "extension-error") {
-			browser.tabs.query({}, (tabs) => {
-				for (const tab of tabs) {
-					if (tab.id) {
-						browser.tabs
-							.sendMessage(tab.id, {
-								type: "extension-error",
-								error: msg.error,
-							})
-							.catch(() => {});
-					}
-				}
-			});
-			sendResponse({ ok: true });
-			return true;
-		}
-		});
 	},
 });
 
 interface OcrBatchItem {
-	msg: InternalMessageType;
+	msg: ProcessOcrMessage;
 	sendResponse: (response: any) => void;
 }
 
@@ -171,8 +180,9 @@ async function flushOcrBatch() {
 		}>((resolve) => {
 			browser.runtime.sendMessage(
 				{
-					target: "offscreen",
-					type: "batch-run-ocr",
+					from: "background",
+					to: "offscreen",
+					type: "offscreen/batch-run-ocr",
 					items: resolvedItems,
 				},
 				(msgResponse) => {
@@ -226,6 +236,89 @@ async function flushOcrBatch() {
 	} finally {
 		activeBatchCount--;
 		scheduleBatchFlush();
+	}
+}
+
+interface TranslationBatchItem {
+	text: string;
+	sendResponse: (response: TranslateTextResponse) => void;
+}
+
+interface TranslationBatch {
+	texts: string[];
+	items: TranslationBatchItem[];
+	timer: ReturnType<typeof setTimeout> | null;
+	flushing: boolean;
+}
+
+const translationBatches = new Map<string, TranslationBatch>();
+const TRANSLATION_BATCH_DEBOUNCE_MS = 20;
+
+function enqueueTranslation(
+	text: string,
+	srcLang: string,
+	targetLang: string,
+	sendResponse: (response: TranslateTextResponse) => void,
+) {
+	const key = `${srcLang}:${targetLang}`;
+	let batch = translationBatches.get(key);
+
+	if (!batch) {
+		batch = { texts: [], items: [], timer: null, flushing: false };
+		translationBatches.set(key, batch);
+	}
+
+	const existingIndex = batch.texts.indexOf(text);
+	if (existingIndex === -1) {
+		batch.texts.push(text);
+	}
+	batch.items.push({ text, sendResponse });
+
+	if (batch.timer === null && !batch.flushing) {
+		batch.timer = setTimeout(() => {
+			batch.timer = null;
+			flushTranslationBatch(key);
+		}, TRANSLATION_BATCH_DEBOUNCE_MS);
+	}
+}
+
+async function flushTranslationBatch(key: string) {
+	const batch = translationBatches.get(key);
+	if (!batch) return;
+
+	batch.flushing = true;
+	const texts = [...batch.texts];
+	const items = [...batch.items];
+	batch.texts = [];
+	batch.items = [];
+
+	const [srcLang, targetLang] = key.split(":");
+
+	try {
+		const results = await translateDynamic(texts, srcLang, targetLang);
+		const textToResult = new Map<string, string>();
+		texts.forEach((text, i) => textToResult.set(text, results[i]));
+
+		items.forEach((item) => {
+			item.sendResponse({
+				success: true,
+				translatedText: textToResult.get(item.text),
+			});
+		});
+	} catch (error) {
+		items.forEach((item) => {
+			item.sendResponse({
+				success: false,
+				error: error instanceof Error ? error.message : "Translation failed",
+			});
+		});
+	} finally {
+		batch.flushing = false;
+		if (batch.texts.length > 0) {
+			setTimeout(() => flushTranslationBatch(key), 0);
+		} else if (batch.items.length === 0) {
+			translationBatches.delete(key);
+		}
 	}
 }
 
