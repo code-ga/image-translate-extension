@@ -1,5 +1,33 @@
 # Changes Log
 
+## 2026-08-27 — Extracted shared popup base and implemented translation hover popup
+
+**New file**: `utils/popup-base.ts`
+**Modified**: `utils/toast.ts`, `utils/translation-popup.ts`, `utils/overlay.ts`
+
+Extracted shared popup styling constants and container/keyframe utilities from `toast.ts` into a new `popup-base.ts` module. Refactored `toast.ts` to consume the base. Implemented `translation-popup.ts` with hover-activated translation popups for OCR overlay boxes, controlled by box and popup mouse events instead of timers.
+
+**Key changes**:
+- `utils/popup-base.ts`: Shared constants (`POPUP_Z_INDEX`, `POPUP_FONT`, `POPUP_BORDER_RADIUS`, `POPUP_BOX_SHADOW`, `POPUP_COLORS`), `getOrCreateContainer()` for fixed-position overlay containers, and `injectPopupStyles()` for idempotent `@keyframes ocr-toast-in` injection
+- `utils/toast.ts`: Refactored to import from `popup-base.ts`; uses shared constants and `getOrCreateContainer`/`injectPopupStyles`; behavior unchanged
+- `utils/translation-popup.ts`: Full hover lifecycle implementation — `showTranslationPopup()` with 300ms debounce and `onReady` callback, `updateTranslationPopup()` (race-condition-safe), `dismissTranslationPopup()` (clears debounce + close timers), `cancelCloseDelay()`, and `startCloseDelay()` for delayed dismissal
+- `utils/overlay.ts`: OCR boxes now use `mouseenter`/`mouseleave` instead of focus; `mouseenter` shows the popup, triggers background translation via `translate/text`, and attaches popup-level `mouseenter`/`mouseleave` listeners; `mouseleave` on either the box or the popup starts a 1000ms close delay; moving from box to popup cancels the pending close
+
+**Popup lifecycle**:
+1. `mouseenter` on OCR box → cancel any pending close, start 300ms debounce to create popup
+2. Popup created → shows original text; if no cached translation, sends `translate/text` to background; attaches `mouseenter`/`mouseleave` to popup itself
+3. `mouseenter` on popup → cancels close delay
+4. `mouseleave` on box or popup → starts 1000ms close delay
+5. Close delay fires → `dismissTranslationPopup()` removes popup and clears all timers
+6. If user mouses out before debounce completes → `dismissTranslationPopup()` cancels the pending popup creation
+
+**Race condition handling**: `updateTranslationPopup` checks whether the provided popup element is still the `currentPopup` before mutating it. If the user mouses out before the background translation response arrives, `dismissTranslationPopup()` clears `currentPopup`, so the late response is silently dropped.
+
+### Validation
+- `bun run compile` passes with zero new type errors
+
+---
+
 ## 2026-08-18 — Fixed empty enabled-domains list behavior
 
 **Modified**: `entrypoints/background.ts`, `entrypoints/popup/App.tsx`

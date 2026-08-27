@@ -1,4 +1,11 @@
 import type { AppMessage, OCRBox } from "@/types";
+import {
+	showTranslationPopup,
+	updateTranslationPopup,
+	dismissTranslationPopup,
+	cancelCloseDelay,
+	startCloseDelay,
+} from "@/utils/translation-popup";
 
 export function getOrCreateOverlayContainer(): HTMLElement {
 	let container = document.getElementById("ocr-overlay-container");
@@ -60,25 +67,52 @@ export function addOcrBoxes(
 			10,
 			((Math.min(box.box.height, box.box.width) * box.box.width) /
 				elementWidth) *
-			0.7,
+				0.7,
 		);
 		const boxDiv = document.createElement("div");
-		boxDiv.addEventListener("focus", async e => {
-			e.preventDefault()
-			if (!box.translation) {
-				const bgResponse = await browser.runtime.sendMessage<AppMessage>({
-					from: "content",
-					to: "background",
-					type: "translate/text",
-					srcLang: "",
-					targetLang: "",
-					text: box.text
+
+		boxDiv.addEventListener("mouseenter", () => {
+			cancelCloseDelay();
+			showTranslationPopup(boxDiv, box.text, (popup) => {
+				if (box.translation) {
+					updateTranslationPopup(popup, box.translation);
+				} else {
+					browser.runtime
+						.sendMessage<AppMessage>({
+							from: "content",
+							to: "background",
+							type: "translate/text",
+							srcLang: "",
+							targetLang: "",
+							text: box.text,
+						})
+						.then((bgResponse) => {
+							updateTranslationPopup(
+								popup,
+								bgResponse.translatedText,
+								bgResponse.error,
+							);
+						})
+						.catch((err) => {
+							updateTranslationPopup(
+								popup,
+								undefined,
+								err instanceof Error ? err.message : "Translation failed",
+							);
+						});
+				}
+
+				popup.addEventListener("mouseenter", cancelCloseDelay);
+				popup.addEventListener("mouseleave", () => {
+					startCloseDelay(() => dismissTranslationPopup(), 1000);
 				});
+			});
+		});
 
-			}
-			console.log(ocrData, e)
+		boxDiv.addEventListener("mouseleave", () => {
+			startCloseDelay(() => dismissTranslationPopup(), 1000);
+		});
 
-		})
 		boxDiv.style.pointerEvents = "auto";
 		boxDiv.innerText = box.text;
 		boxDiv.style.position = "absolute";

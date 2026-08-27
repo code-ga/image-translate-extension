@@ -294,18 +294,16 @@ async function flushTranslationBatch(key: string) {
 
 	const [srcLang, targetLang] = key.split(":");
 
-	try {
-		const results = await translateDynamic(texts, srcLang, targetLang);
-		const textToResult = new Map<string, string>();
-		texts.forEach((text, i) => textToResult.set(text, results[i]));
+		try {
+			const results = await translateDynamic(texts, srcLang, targetLang);
 
-		items.forEach((item) => {
-			item.sendResponse({
-				success: true,
-				translatedText: textToResult.get(item.text),
+			items.forEach((item) => {
+				item.sendResponse({
+					success: true,
+					translatedText: results[item.text],
+				});
 			});
-		});
-	} catch (error) {
+		} catch (error) {
 		items.forEach((item) => {
 			item.sendResponse({
 				success: false,

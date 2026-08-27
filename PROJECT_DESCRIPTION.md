@@ -28,6 +28,9 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking |
 | `utils/domain-matcher.ts` | URL domain/pattern matching for extension enablement rules |
 | `utils/constants.ts` | Shared constants (offscreen paths, message targets) |
+| `utils/popup-base.ts` | Shared popup base: z-index, font, border-radius, box-shadow constants, container creation, and keyframe animation injection |
+| `utils/toast.ts` | Inline DOM toast notifications using shared popup base; debounce, dedup, auto-removal |
+| `utils/translation-popup.ts` | Hover-activated translation popup for OCR overlay boxes; mouseenter on box shows popup with debounce, mouseleave on box or popup starts delayed close; race-condition-safe response updates |
 
 ### Config & Types
 
@@ -58,4 +61,5 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 - **Generic element tracking**: `createElementState<T>()` eliminates duplication between image and canvas state management
 - **Callback-based OCR pipeline**: `processImage()` / `processCanvas()` accept `onSuccess` callbacks for decoupled result rendering
 - **Overlay utilities**: Shared positioning, box creation, and container management in `overlay.ts` avoid duplicated CSS and DOM logic
+- **Popup base**: `popup-base.ts` centralizes z-index, font, border-radius, box-shadow, color themes, and keyframe animation injection; `toast.ts` and `translation-popup.ts` both consume it to eliminate duplication
 - **Observer lifecycle**: Every resize observer, mutation observer, and overlay DOM node is tracked and cleaned up on element removal or src change
