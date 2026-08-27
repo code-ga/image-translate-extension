@@ -455,3 +455,22 @@
 	color: #e4e6eb;
 	font-weight: 700;
 }
+
+.lang-select {
+	width: 140px;
+	padding: 4px 8px;
+	border: 1px solid #3a3a4a;
+	background: #252536;
+	color: #e4e6eb;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	outline: none;
+	flex-shrink: 0;
+	margin-left: 12px;
+	cursor: pointer;
+}
+
+.lang-select:focus {
+	border-color: #4f8ef7;
+}

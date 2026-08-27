@@ -1,9 +1,7 @@
 import type {
 	AppMessage,
 	CanvasInfoWithStatus,
-	ExtensionErrorMessage,
 	ImageInfoWithStatus,
-	OCRBox,
 	OCRRegion,
 	TranslateCompleteMessage,
 	TranslateProgressMessage,
@@ -20,6 +18,7 @@ import {
 import { getExtensionSettings, isUrlAllowedInSettings } from "@/utils/extension-settings";
 import { showToast } from "@/utils/toast";
 import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
+import { setDefaultTargetLang } from "@/utils/translation-popup";
 
 const imageState = createElementState<HTMLImageElement>();
 const canvasState = createElementState<HTMLCanvasElement>();
@@ -171,6 +170,15 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 	);
 }
 
+async function syncSettingsTargetLang() {
+	try {
+		const settings = await getExtensionSettings();
+		setDefaultTargetLang(settings.targetLang || "vi");
+	} catch {
+		// keep previous default on failure
+	}
+}
+
 function findImageBySrc(src: string): HTMLImageElement | null {
 	for (const img of Array.from(document.images)) {
 		if (img.currentSrc === src || img.src === src) return img;
@@ -288,6 +296,7 @@ export default defineContentScript({
 	main() {
 		console.log("Content script loaded for URL:", window.location.href);
 		autoTranslateIfAllowed();
+		syncSettingsTargetLang();
 
 		const urlPolling = startUrlPolling(() => {
 			autoTranslateIfAllowed();
@@ -344,6 +353,7 @@ export default defineContentScript({
 					return true;
 				case "settings/changed":
 					autoTranslateIfAllowed();
+					setDefaultTargetLang(msg.settings.targetLang || "vi");
 					break;
 				case "background/translate": {
 					const escapedUrl = msg.url.replace(/"/g, '\\"');

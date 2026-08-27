@@ -41,6 +41,7 @@ export type NotifySettingsChangedMessage = Message<
 		settings: {
 			enabled: boolean;
 			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			targetLang: string;
 		};
 	}
 >;
@@ -51,6 +52,7 @@ export type SettingsChangedMessage = Message<
 		settings: {
 			enabled: boolean;
 			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			targetLang: string;
 		};
 	}
 >;

@@ -1,7 +1,6 @@
-import type { AppMessage, OCRBox } from "@/types";
+import type { OCRBox } from "@/types";
 import {
 	showTranslationPopup,
-	updateTranslationPopup,
 	dismissTranslationPopup,
 	cancelCloseDelay,
 	startCloseDelay,
@@ -74,34 +73,6 @@ export function addOcrBoxes(
 		boxDiv.addEventListener("mouseenter", () => {
 			cancelCloseDelay();
 			showTranslationPopup(boxDiv, box.text, (popup) => {
-				if (box.translation) {
-					updateTranslationPopup(popup, box.translation);
-				} else {
-					browser.runtime
-						.sendMessage<AppMessage>({
-							from: "content",
-							to: "background",
-							type: "translate/text",
-							srcLang: "",
-							targetLang: "",
-							text: box.text,
-						})
-						.then((bgResponse) => {
-							updateTranslationPopup(
-								popup,
-								bgResponse.translatedText,
-								bgResponse.error,
-							);
-						})
-						.catch((err) => {
-							updateTranslationPopup(
-								popup,
-								undefined,
-								err instanceof Error ? err.message : "Translation failed",
-							);
-						});
-				}
-
 				popup.addEventListener("mouseenter", cancelCloseDelay);
 				popup.addEventListener("mouseleave", () => {
 					startCloseDelay(() => dismissTranslationPopup(), 1000);

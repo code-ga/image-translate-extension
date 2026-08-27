@@ -1,6 +1,34 @@
 # Changes Log
 
-## 2026-08-27 — Extracted shared popup base and implemented translation hover popup
+## 2026-08-28 — Default target language selection (popup settings + hover popup)
+
+Added a user-configurable default target language plus per-translation language selection in the hover popup, and fixed the settings broadcast so language changes propagate live to content scripts.
+
+**New file**: `utils/languages.ts`
+**Modified**: `utils/extension-settings.ts`, `types/messages.ts`, `utils/translation-popup.ts`, `utils/overlay.ts`, `entrypoints/popup/App.tsx`, `entrypoints/popup/App.css`, `entrypoints/content.ts`
+
+**Key changes**:
+- `utils/languages.ts`: New shared module exporting `SUPPORTED_LANGUAGES` (17 common language codes/labels), `DEFAULT_TARGET_LANG` ("vi"), and `Language`/`getLanguageLabel`/`findLanguage` helpers. Consumed by both the popup Settings UI and the hover translation popup.
+- `utils/extension-settings.ts`: `ExtensionSettings` now includes `targetLang: string` (default `"vi"`); `getExtensionSettings()` merges stored values over `DEFAULT_SETTINGS` so `targetLang` is always present for older stored settings.
+- `types/messages.ts`: `NotifySettingsChangedMessage` and `SettingsChangedMessage` now carry `targetLang: string` in their `settings` payload.
+- `utils/translation-popup.ts`: Rewritten so the hover popup is self-contained. It renders an "Original" header (OCR text), a target-language `<select>` pre-set to the cached default, and a color-coded result area. Translation is triggered internally via `requestTranslate` and re-runs on `<select>` change; race-condition-safe (late responses are dropped if the popup was dismissed). Adds `setDefaultTargetLang(lang)` (cache setter used by the content script) and keeps `dismissTranslationPopup`/`cancelCloseDelay`/`startCloseDelay`/`updateTranslationPopup`. The default target language is cached in the module and seeded by the content script; per-hover language choices are ephemeral and do not override the global default.
+- `utils/overlay.ts`: Simplified the OCR box `mouseenter` handler — the inline `translate/text` send and `box.translation` branch moved into `translation-popup.ts`; the `onReady` callback now only wires popup-level open/close behavior. Removed the now-unused `updateTranslationPopup` import and unused `AppMessage` type import.
+- `entrypoints/popup/App.tsx`: Added `targetLang` state + a "Default Target Language" `<select>` (bound to `SUPPORTED_LANGUAGES`) in the Settings tab; loaded/saved via `loadSettings`/`saveSettings`. **Bug fix**: the notify message type was `"notify-settings-changed"` (never matched the background's `"settings/notify-changed"` listener), so `settings/changed` was never broadcast to tabs — corrected to `"settings/notify-changed"` and `targetLang` is now included in the broadcast payload.
+- `entrypoints/content.ts`: Added `syncSettingsTargetLang()` (seeds the cached default target language from storage on load) and a `settings/changed` handler update that calls `setDefaultTargetLang(msg.settings.targetLang)`. Removed two pre-existing unused imports (`ExtensionErrorMessage`, `OCRBox`).
+- `entrypoints/popup/App.css`: Added `.lang-select` style for the Settings language dropdown.
+
+**Data flow**:
+1. User picks a default language in popup Settings → `saveSettings` writes `targetLang` to `browser.storage.sync` → sends `settings/notify-changed` (now matched) → background broadcasts `settings/changed` to all content-script tabs → each tab caches the new default via `setDefaultTargetLang`.
+2. User hovers an OCR box → `overlay.ts` `mouseenter` → `showTranslationPopup(anchor, text, onReady)` builds the popup with the cached default language selected → `requestTranslate` sends `translate/text` (with the chosen `targetLang`) → `background.ts` `enqueueTranslation`/`flushTranslationBatch` → `translateDynamic` → result returned and rendered in the popup result area. Changing the `<select>` re-translates with the new language without leaving the popup.
+
+**Backward compatibility**: Existing stored settings without `targetLang` fall back to `"vi"` via the `DEFAULT_SETTINGS` merge.
+
+### Notes
+- `srcLang` remains `""` in outgoing `translate/text` messages (pre-existing behavior). `translateDynamic` builds the model name `Xenova/opus-mt-<srcLang>-<targetLang>`, so a concrete source language is still required for the HF model to load; source-language detection is left for future work.
+
+### Validation
+- `bun run compile` (tsc --noEmit) passes with zero type errors.
+- New/changed files introduce no new `biome` lint-rule violations (remaining `any`/`noBannedTypes` warnings in `App.tsx` and `types/messages.ts` are pre-existing on untouched code).
 
 **New file**: `utils/popup-base.ts`
 **Modified**: `utils/toast.ts`, `utils/translation-popup.ts`, `utils/overlay.ts`

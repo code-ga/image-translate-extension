@@ -2,6 +2,7 @@ import "./App.css";
 import { useState, useEffect, useCallback } from "react";
 import { DomainPattern } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
+import { SUPPORTED_LANGUAGES } from "@/utils/languages";
 
 const STORAGE_KEY = "extensionSettings";
 
@@ -32,6 +33,7 @@ function App() {
 		"domain",
 	);
 	const [currentDomain, setCurrentDomain] = useState<string>("");
+	const [targetLang, setTargetLang] = useState("vi");
 	const [imageCount, setImageCount] = useState(0);
 	const [canvasCount, setCanvasCount] = useState(0);
 	const [imageProcessingCount, setImageProcessingCount] = useState(0);
@@ -45,34 +47,39 @@ function App() {
 		const settings = result[STORAGE_KEY] || {
 			enabledDomains: [],
 			enabled: true,
+			targetLang: "vi",
 		};
 		setEnabledDomains(settings.enabledDomains || []);
 		setGlobalEnabled(settings.enabled ?? true);
+		setTargetLang(settings.targetLang || "vi");
 	}, []);
 
 	const saveSettings = useCallback(
 		async (updates: {
 			enabledDomains?: DomainPattern[];
 			enabled?: boolean;
+			targetLang?: string;
 		}) => {
 			const current = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
 				string,
 				any
 			>;
 			const settings = {
-				...(current[STORAGE_KEY] || { enabledDomains: [], enabled: true }),
+				...(current[STORAGE_KEY] || { enabledDomains: [], enabled: true, targetLang: "vi" }),
 				...updates,
 			};
 			await browser.storage.sync.set({ [STORAGE_KEY]: settings });
 			setEnabledDomains(settings.enabledDomains || []);
 			setGlobalEnabled(settings.enabled ?? true);
+			setTargetLang(settings.targetLang || "vi");
 
 			browser.runtime
 				.sendMessage({
-					type: "notify-settings-changed",
+					type: "settings/notify-changed",
 					settings: {
 						enabled: settings.enabled ?? true,
 						enabledDomains: settings.enabledDomains || [],
+						targetLang: settings.targetLang || "vi",
 					},
 				})
 				.catch(() => {});
@@ -210,6 +217,14 @@ function App() {
 
 	const toggleGlobal = async () => {
 		await saveSettings({ enabled: !globalEnabled });
+	};
+
+	const changeTargetLang = async (
+		e: React.ChangeEvent<HTMLSelectElement>,
+	) => {
+		const lang = e.target.value;
+		setTargetLang(lang);
+		await saveSettings({ targetLang: lang });
 	};
 
 	const getStatusLabel = (status: string) => {
@@ -356,6 +371,28 @@ function App() {
 						>
 							{globalEnabled ? "ON" : "OFF"}
 						</button>
+					</div>
+
+					<div className="divider" />
+
+					<div className="setting-item">
+						<div className="setting-label">
+							<span className="setting-title">Default Target Language</span>
+							<span className="setting-desc">
+								Used for auto-translation and as the default in the hover popup
+							</span>
+						</div>
+						<select
+							className="lang-select"
+							value={targetLang}
+							onChange={changeTargetLang}
+						>
+							{SUPPORTED_LANGUAGES.map((lang) => (
+								<option key={lang.code} value={lang.code}>
+									{lang.label}
+								</option>
+							))}
+						</select>
 					</div>
 
 					<div className="divider" />

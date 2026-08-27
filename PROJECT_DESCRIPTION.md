@@ -25,12 +25,13 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | `utils/dom-observer.ts` | Live MutationObserver for new DOM nodes, SPA URL change polling, used by content script for auto-translation |
 | `utils/asset-cache.ts` | IndexedDB asset caching, cache URL validation, fetch wrapper installation |
 | `utils/ocr-batcher.ts` | PaddleOcrService model initialization, batch OCR execution, and region grouping |
-| `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking |
+| `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking; defines `ExtensionSettings` (including `targetLang`) with `DEFAULT_SETTINGS` defaults and `getExtensionSettings()` merge |
 | `utils/domain-matcher.ts` | URL domain/pattern matching for extension enablement rules |
 | `utils/constants.ts` | Shared constants (offscreen paths, message targets) |
+| `utils/languages.ts` | Supported languages list (`SUPPORTED_LANGUAGES`), `DEFAULT_TARGET_LANG` ("vi"), and `Language` type used by the popup Settings UI and the hover translation popup language selector |
 | `utils/popup-base.ts` | Shared popup base: z-index, font, border-radius, box-shadow constants, container creation, and keyframe animation injection |
 | `utils/toast.ts` | Inline DOM toast notifications using shared popup base; debounce, dedup, auto-removal |
-| `utils/translation-popup.ts` | Hover-activated translation popup for OCR overlay boxes; mouseenter on box shows popup with debounce, mouseleave on box or popup starts delayed close; race-condition-safe response updates |
+| `utils/translation-popup.ts` | Hover-activated translation popup for OCR overlay boxes; mouseenter on box shows popup with debounce, mouseleave on box or popup starts delayed close; race-condition-safe response updates. The popup renders the original OCR text, a target-language `<select>` (default taken from the cached extension setting), and a color-coded result area. Changing the select re-translates the same text with the new target language. Public API: `showTranslationPopup(anchor, text, onReady?)`, `dismissTranslationPopup()`, `cancelCloseDelay()`, `startCloseDelay(cb, ms?)`, `setDefaultTargetLang(lang)` |
 
 ### Config & Types
 
@@ -43,18 +44,22 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 ## Feature Flow
 
 1. **Content script activation**: `content.ts` runs automatically on all pages via manifest `<all_urls>` match. On load, it calls `autoTranslateIfAllowed()` which checks extension settings and domain permissions, then processes all matching images/canvases. It also starts URL polling to detect SPA navigation and a live DOM observer for dynamically added elements
-2. **Settings change handling**: `settings-changed` messages from the popup trigger `autoTranslateIfAllowed()` to re-evaluate auto-translation rules
- 3. **User triggers translation**: Via popup (translating listed images/canvases) or context menu (`translate` message) — content script processes the specified elements on demand
- 4. **New element added**: `dom-observer.ts` → `handleAddedNodes()` → calls `processNewImage()` or `processNewCanvas()`
- 5. **OCR pipeline**: `ocr-pipeline.ts` tries canvas extraction first, then fetch, then URL-based background processing
- 6. **Background batch**: `background.ts` queues OCR requests, batches them, sends to offscreen document for PaddleOCR inference
- 7. **Region grouping**: `ocr-batcher.ts` converts raw PaddleOCR boxes to `OCRBox[]`, runs `groupOcrBoxesIntoRegions()` to produce `OCRRegion[]` with convex hull bounds and concatenated text
- 8. **Result callback**: OCR regions flow back via `onSuccess` callback → `renderImageOverlay()` / `renderCanvasOverlay()` flattens region boxes and creates DOM overlay
- 9. **Overlay positioning**: `element-state.ts` ResizeObserver + rAF-scheduled batch updates keep overlays aligned with their target elements
- 10. **Host communication**: `window.sendOcrToHost` / `window.removeOcrFromHost` allow external scripts to trigger or clear overlays
- 11. **Asset caching**: `asset-cache.ts` intercepts fetch for model assets and caches them in IndexedDB, avoiding redundant downloads
- 12. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
- 13. **Extension settings**: `extension-settings.ts` centralizes settings retrieval and domain permission checking, eliminating duplication in `background.ts`
+2. **Settings change handling**: The popup saves settings to `browser.storage.sync` and broadcasts a `settings/notify-changed` message to the background, which relays a `settings/changed` message to all content-script tabs. Each content script re-runs `autoTranslateIfAllowed()` AND calls `setDefaultTargetLang(settings.targetLang)` to cache the user's default target language for the hover translation popup. The content script also seeds this cache on load via `syncSettingsTargetLang()`.
+3. **Target language selection**: Hovering an OCR overlay box opens the translation popup (`translation-popup.ts`), which shows the original OCR text and a target-language `<select>` pre-set to the cached default. Selecting a different language re-sends a `translate/text` message (with the chosen `targetLang`) to the background, which batches and runs `translateDynamic()`. The popup's choice is ephemeral and does not overwrite the global default configured in the popup Settings tab.
+4. **User triggers translation**: Via popup (translating listed images/canvases) or context menu (`translate` message) — content script processes the specified elements on demand
+5. **New element added**: `dom-observer.ts` → `handleAddedNodes()` → calls `processNewImage()` or `processNewCanvas()`
+6. **OCR pipeline**: `ocr-pipeline.ts` tries canvas extraction first, then fetch, then URL-based background processing
+7. **Background batch**: `background.ts` queues OCR requests, batches them, sends to offscreen document for PaddleOCR inference
+8. **Region grouping**: `ocr-batcher.ts` converts raw PaddleOCR boxes to `OCRBox[]`, runs `groupOcrBoxesIntoRegions()` to produce `OCRRegion[]` with convex hull bounds and concatenated text
+9. **Result callback**: OCR regions flow back via `onSuccess` callback → `renderImageOverlay()` / `renderCanvasOverlay()` flattens region boxes and creates DOM overlay
+10. **Overlay positioning**: `element-state.ts` ResizeObserver + rAF-scheduled batch updates keep overlays aligned with their target elements
+11. **Overlay hover popup**: `overlay.ts` attaches `mouseenter`/`mouseleave` to each `OCRBox` div; `mouseenter` shows the translation popup, `mouseleave` arms a delayed dismiss; the popup owns the translate request and language selector (`translation-popup.ts`)
+12. **Host communication**: `window.sendOcrToHost` / `window.removeOcrFromHost` allow external scripts to trigger or clear overlays
+13. **Asset caching**: `asset-cache.ts` intercepts fetch for model assets and caches them in IndexedDB, avoiding redundant downloads
+14. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
+15. **Translation**: `background.ts` receives `translate/text` messages, de-duplicates and batches them per `srcLang:targetLang` key via `enqueueTranslation`/`flushTranslationBatch`, and runs `translateDynamic()` (HuggingFace `Xenova/opus-mt-<src>-<target>` transformer pipeline). Result returned to the popup via `sendResponse`.
+16. **Extension settings**: `extension-settings.ts` centralizes settings retrieval (`enabled`, `enabledDomains`, `targetLang`) with `DEFAULT_SETTINGS` defaults and domain permission checking, eliminating duplication in `background.ts`
+17. **Popup settings UI**: `entrypoints/popup/App.tsx` Settings tab renders a Default Target Language `<select>` bound to `SUPPORTED_LANGUAGES`; saving writes `targetLang` to `browser.storage.sync` and broadcasts `settings/notify-changed` so content scripts cache the new default
 
 ## Key Design Patterns
 
@@ -63,3 +68,9 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 - **Overlay utilities**: Shared positioning, box creation, and container management in `overlay.ts` avoid duplicated CSS and DOM logic
 - **Popup base**: `popup-base.ts` centralizes z-index, font, border-radius, box-shadow, color themes, and keyframe animation injection; `toast.ts` and `translation-popup.ts` both consume it to eliminate duplication
 - **Observer lifecycle**: Every resize observer, mutation observer, and overlay DOM node is tracked and cleaned up on element removal or src change
+
+## Notes & Future Work
+
+- **`srcLang` is currently empty**: `translation-popup.ts` sends `srcLang: ""` with every `translate/text` request, which resolves to the model name `Xenova/opus-mt--<targetLang>`. A valid HuggingFace opus-mt model requires a concrete source language (e.g. `Xenova/opus-mt-en-vi`). Adding automatic source-language detection (e.g. via a language-classification model) and/or a source-language setting is needed for `translateDynamic()` to load the correct model. The target-language plumbing added here is in place and ready for that.
+- **Settings broadcast repair**: The popup previously sent `notify-settings-changed`, which the background never matched (it listened for `settings/notify-changed`), so `settings/changed` was never relayed to content scripts. This has been corrected so settings now propagate live.
+- **Translation batching**: per-`srcLang:targetLang` batches mean each target language is translated by a separate model instance; the cache in `ocr-batcher.ts`/`translation.ts` keys loaded models by `<src>-<target>`.
