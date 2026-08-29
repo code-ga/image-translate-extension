@@ -16,7 +16,9 @@ const POPUP_GAP = 6;
 type PopupStatus = "info" | "success" | "error";
 
 let currentPopup: HTMLDivElement | null = null;
-let currentResultEl: HTMLElement | null = null;
+let currentSentenceResultEl: HTMLElement | null = null;
+let currentWordResultEl: HTMLElement | null = null;
+let currentWordText: string = "";
 let currentSelect: HTMLSelectElement | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let closeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -26,9 +28,49 @@ export function setDefaultTargetLang(lang: string): void {
 	cachedTargetLang = lang;
 }
 
+function createTranslationRow(label: string, originalText: string): { container: HTMLElement; resultEl: HTMLElement } {
+	const container = document.createElement("div");
+	container.style.cssText = `
+		padding: 8px 12px;
+	`;
+
+	const labelEl = document.createElement("div");
+	labelEl.textContent = label;
+	labelEl.style.cssText = `
+		font-size: 10px;
+		color: #808090;
+		margin-bottom: 3px;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	`;
+
+	const originalEl = document.createElement("div");
+	originalEl.textContent = originalText;
+	originalEl.style.cssText = `
+		font-size: 11px;
+		color: #a0a0b0;
+		margin-bottom: 4px;
+		word-break: break-all;
+	`;
+	originalEl.title = originalText;
+
+	const resultEl = document.createElement("div");
+	resultEl.style.cssText = `
+		font-size: 12px;
+		color: ${POPUP_COLORS.info.text};
+		word-break: break-word;
+	`;
+	resultEl.textContent = "Translating...";
+
+	container.append(labelEl, originalEl, resultEl);
+
+	return { container, resultEl };
+}
+
 export function showTranslationPopup(
 	anchor: HTMLElement,
 	text: string,
+	word: string,
 	onReady?: (popup: HTMLDivElement) => void,
 ): HTMLDivElement | null {
 	if (debounceTimer) {
@@ -116,34 +158,86 @@ export function showTranslationPopup(
 		langRow.append(langLabel, select);
 		popup.appendChild(langRow);
 
-		const result = document.createElement("div");
-		result.style.cssText = `
-			padding: 10px 12px;
-			font-size: 12px;
-			color: ${POPUP_COLORS.info.text};
-			word-break: break-word;
-		`;
-		result.textContent = "Translating...";
-		popup.appendChild(result);
+		const sentenceSection = createTranslationRow("Sentence", text);
+		popup.appendChild(sentenceSection.container);
+		const sentenceResultEl = sentenceSection.resultEl;
+
+		let wordResultEl: HTMLElement | null = null;
+		if (word && word !== text) {
+			const wordSection = createTranslationRow(`Word: "${word}"`, word);
+			wordSection.container.style.borderTop = `1px solid ${POPUP_COLORS.info.border}`;
+			popup.appendChild(wordSection.container);
+			wordResultEl = wordSection.resultEl;
+		}
 
 		positionPopup(popup, anchor);
 
 		document.body.appendChild(popup);
 		currentPopup = popup;
-		currentResultEl = result;
+		currentSentenceResultEl = sentenceResultEl;
+		currentWordResultEl = wordResultEl;
+		currentWordText = word;
 		currentSelect = select;
 
 		select.addEventListener("change", () => {
 			const targetLang = select.value;
-			requestTranslate(text, targetLang);
+			requestTranslateText(text, targetLang, sentenceResultEl, popup);
+			if (wordResultEl) {
+				requestTranslateText(word, targetLang, wordResultEl, popup);
+			}
 		});
 
-		requestTranslate(text, select.value);
+		requestTranslateText(text, select.value, sentenceResultEl, popup);
+		if (wordResultEl) {
+			requestTranslateText(word, select.value, wordResultEl, popup);
+		}
 
 		onReady?.(popup);
 	}, POPUP_DEBOUNCE_MS);
 
 	return null;
+}
+
+function requestTranslateText(
+	text: string,
+	targetLang: string,
+	resultEl: HTMLElement,
+	popupEl: HTMLDivElement,
+) {
+	setResult(resultEl, "Translating...", "info");
+
+	browser.runtime
+		.sendMessage<AppMessage>({
+			from: "content",
+			to: "background",
+			type: "translate/text",
+			srcLang: "",
+			targetLang,
+			text,
+		})
+		.then((response: TranslateTextResponse) => {
+			if (popupEl !== currentPopup) return;
+			if (response.success) {
+				setResult(resultEl, response.translatedText || "(no translation)", "success");
+			} else {
+				setResult(resultEl, response.error || "Translation failed", "error");
+			}
+		})
+		.catch((err) => {
+			if (popupEl !== currentPopup) return;
+			setResult(
+				resultEl,
+				err instanceof Error ? err.message : "Translation failed",
+				"error",
+			);
+		});
+}
+
+function setResult(el: HTMLElement, text: string, status: PopupStatus) {
+	el.textContent = text;
+	const color = POPUP_COLORS[status];
+	el.style.background = color.bg;
+	el.style.color = color.text;
 }
 
 function positionPopup(popup: HTMLElement, anchor: HTMLElement) {
@@ -174,61 +268,18 @@ function positionPopup(popup: HTMLElement, anchor: HTMLElement) {
 	popup.style.left = `${left}px`;
 }
 
-function requestTranslate(text: string, targetLang: string) {
-	if (!currentPopup || !currentResultEl || !currentSelect) return;
-	if (currentSelect.value !== targetLang) {
-		currentSelect.value = targetLang;
-	}
-	setResult("Translating...", "info");
-
-	const popup = currentPopup;
-	const resultEl = currentResultEl;
-
-	browser.runtime
-		.sendMessage<AppMessage>({
-			from: "content",
-			to: "background",
-			type: "translate/text",
-			srcLang: "",
-			targetLang,
-			text,
-		})
-		.then((response: TranslateTextResponse) => {
-			if (popup !== currentPopup || resultEl !== currentResultEl) return;
-			if (response.success) {
-				setResult(response.translatedText || "(no translation)", "success");
-			} else {
-				setResult(response.error || "Translation failed", "error");
-			}
-		})
-		.catch((err) => {
-			if (popup !== currentPopup || resultEl !== currentResultEl) return;
-			setResult(
-				err instanceof Error ? err.message : "Translation failed",
-				"error",
-			);
-		});
-}
-
-function setResult(text: string, status: PopupStatus) {
-	if (!currentResultEl) return;
-	currentResultEl.textContent = text;
-	const color = POPUP_COLORS[status];
-	currentResultEl.style.background = color.bg;
-	currentResultEl.style.color = color.text;
-}
-
 export function updateTranslationPopup(
 	popup: HTMLDivElement | null,
 	translation?: string,
 	error?: string,
 ) {
 	if (!popup || popup !== currentPopup) return;
+	if (!currentSentenceResultEl) return;
 
 	if (error) {
-		setResult(error, "error");
+		setResult(currentSentenceResultEl, error, "error");
 	} else if (translation) {
-		setResult(translation, "success");
+		setResult(currentSentenceResultEl, translation, "success");
 	}
 }
 
@@ -242,7 +293,9 @@ export function dismissTranslationPopup() {
 		currentPopup.remove();
 	}
 	currentPopup = null;
-	currentResultEl = null;
+	currentSentenceResultEl = null;
+	currentWordResultEl = null;
+	currentWordText = "";
 	currentSelect = null;
 }
 

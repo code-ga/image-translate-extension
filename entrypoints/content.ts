@@ -37,7 +37,7 @@ function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
 				existingOverlay,
 				img.naturalWidth,
 				img.naturalHeight,
-				ocrRegions.flatMap((r) => r.boxes),
+				ocrRegions,
 			);
 			updateElementOverlayPosition(img, existingOverlay);
 		}
@@ -55,7 +55,7 @@ function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
 	overlay.style.position = "absolute";
 	overlay.style.pointerEvents = "none";
 
-	addOcrBoxes(overlay, img.naturalWidth, img.naturalHeight, ocrRegions.flatMap((r) => r.boxes));
+	addOcrBoxes(overlay, img.naturalWidth, img.naturalHeight, ocrRegions);
 	container.appendChild(overlay);
 	imageState.overlayMap.set(img, overlay);
 	updateElementOverlayPosition(img, overlay);
@@ -74,7 +74,7 @@ function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrRegions: OCRRegion[])
 		const existingOverlay = canvasState.overlayMap.get(canvas);
 		if (existingOverlay) {
 			clearOcrOverlays(existingOverlay);
-			addOcrBoxes(existingOverlay, canvas.width, canvas.height, ocrRegions.flatMap((r) => r.boxes));
+			addOcrBoxes(existingOverlay, canvas.width, canvas.height, ocrRegions);
 			updateElementOverlayPosition(canvas, existingOverlay);
 		}
 		return;
@@ -91,7 +91,7 @@ function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrRegions: OCRRegion[])
 	overlay.style.position = "absolute";
 	overlay.style.pointerEvents = "none";
 
-	addOcrBoxes(overlay, canvas.width, canvas.height, ocrRegions.flatMap((r) => r.boxes));
+	addOcrBoxes(overlay, canvas.width, canvas.height, ocrRegions);
 	container.appendChild(overlay);
 	canvasState.overlayMap.set(canvas, overlay);
 	updateElementOverlayPosition(canvas, overlay);
@@ -136,7 +136,7 @@ function processNewImage(img: HTMLImageElement) {
 					type: "extension/error",
 					error: error instanceof Error ? error.message : error,
 				})
-				.catch(() => {});
+				.catch(() => { });
 		},
 	);
 }
@@ -165,7 +165,7 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 					type: "extension/error",
 					error: error instanceof Error ? error.message : error,
 				})
-				.catch(() => {});
+				.catch(() => { });
 		},
 	);
 }
