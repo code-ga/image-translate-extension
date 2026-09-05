@@ -10,6 +10,7 @@ import type {
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { getExtensionSettings } from "@/utils/extension-settings";
 import { translateDynamic } from "@/utils/translation";
+import { FastText } from "fasttext.wasm";
 
 export default defineBackground({
 	type: "module",
@@ -52,7 +53,7 @@ export default defineBackground({
 					type: "background/translate",
 					url: info.srcUrl,
 				})
-				.catch(() => {});
+				.catch(() => { });
 		});
 
 		browser.action.onClicked.addListener((tab) => {
@@ -60,7 +61,7 @@ export default defineBackground({
 		});
 
 		browser.runtime.onMessage.addListener(
-			(msg: AppMessage, _sender, sendResponse) => {
+			async (msg: AppMessage, _sender, sendResponse) => {
 				switch (msg.type) {
 					case "ocr/process":
 						ocrBatchQueue.push({ msg, sendResponse });
@@ -82,7 +83,7 @@ export default defineBackground({
 											type: "settings/changed",
 											settings: msg.settings,
 										})
-										.catch(() => {});
+										.catch(() => { });
 								}
 							}
 						});
@@ -99,14 +100,14 @@ export default defineBackground({
 											type: "extension/error",
 											error: msg.error,
 										})
-										.catch(() => {});
+										.catch(() => { });
 								}
 							}
 						});
 						sendResponse({ ok: true });
 						return true;
 					case "translate/text": {
-						enqueueTranslation(msg.text, msg.srcLang, msg.targetLang, sendResponse);
+						await enqueueTranslation(msg.text, msg.srcLang, msg.targetLang, sendResponse);
 						return true;
 					}
 				}
@@ -254,12 +255,20 @@ interface TranslationBatch {
 const translationBatches = new Map<string, TranslationBatch>();
 const TRANSLATION_BATCH_DEBOUNCE_MS = 20;
 
-function enqueueTranslation(
+async function enqueueTranslation(
 	text: string,
 	srcLang: string,
-	targetLang: string,
+	targetLangParam: string,
 	sendResponse: (response: TranslateTextResponse) => void,
 ) {
+	let targetLang = targetLangParam
+	if (targetLangParam === "auto") {
+		const fastText = await FastText.create(); // don't call new FastText() directly
+		await fastText.loadModel(); // load default model(lid.176.ftz)
+		const result = fastText.detect(text);
+		console.log(result); // 'en'
+		targetLang = result
+	}
 	const key = `${srcLang}:${targetLang}`;
 	let batch = translationBatches.get(key);
 
@@ -294,16 +303,16 @@ async function flushTranslationBatch(key: string) {
 
 	const [srcLang, targetLang] = key.split(":");
 
-		try {
-			const results = await translateDynamic(texts, srcLang, targetLang);
+	try {
+		const results = await translateDynamic(texts, srcLang, targetLang);
 
-			items.forEach((item) => {
-				item.sendResponse({
-					success: true,
-					translatedText: results[item.text],
-				});
+		items.forEach((item) => {
+			item.sendResponse({
+				success: true,
+				translatedText: results[item.text],
 			});
-		} catch (error) {
+		});
+	} catch (error) {
 		items.forEach((item) => {
 			item.sendResponse({
 				success: false,
