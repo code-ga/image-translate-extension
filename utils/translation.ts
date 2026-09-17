@@ -1,17 +1,10 @@
-import { env, pipeline } from "@huggingface/transformers";
+import { pipeline, env } from "@huggingface/transformers"
 
-env.useBrowserCache = true;
-env.allowLocalModels = true;
-const loadedModels = {} as Record<
-	string,
-	Awaited<ReturnType<typeof pipeline<"translation">>>
->;
+env.useBrowserCache = true
+env.allowLocalModels = true
+const loadedModels = {} as Record<string, Awaited<ReturnType<typeof pipeline<"translation">>>>
 
-export async function translateDynamic(
-	text: string | string[],
-	srcLang = "en",
-	targetLang = "vi",
-): Promise<Record<string, string>> {
+export async function translateDynamic(text: string | string[], srcLang: string, targetLang = "vi"): Promise<Record<string, string>> {
 	const texts = Array.isArray(text) ? text : [text];
 	if (texts.length === 0) return {};
 
@@ -31,10 +24,7 @@ export async function translateDynamic(
 		});
 		return result;
 	} catch (err) {
-		console.error(
-			`Không tìm thấy model dịch cho cặp ${srcLang}->${targetLang}`,
-			err,
-		);
+		console.error(`Không tìm thấy model dịch cho cặp ${srcLang}->${targetLang}`, err);
 		throw err;
 	}
 }

@@ -1,12 +1,12 @@
 import type { AppMessage, TranslateTextResponse } from "@/types";
 import { DEFAULT_TARGET_LANG, SUPPORTED_LANGUAGES } from "./languages";
 import {
-	injectPopupStyles,
 	POPUP_BORDER_RADIUS,
 	POPUP_BOX_SHADOW,
 	POPUP_COLORS,
 	POPUP_FONT,
 	POPUP_Z_INDEX,
+	injectPopupStyles,
 } from "./popup-base";
 
 const POPUP_DEBOUNCE_MS = 300;
@@ -28,10 +28,7 @@ export function setDefaultTargetLang(lang: string): void {
 	cachedTargetLang = lang;
 }
 
-function createTranslationRow(
-	label: string,
-	originalText: string,
-): { container: HTMLElement; resultEl: HTMLElement } {
+function createTranslationRow(label: string, originalText: string): { container: HTMLElement; resultEl: HTMLElement } {
 	const container = document.createElement("div");
 	container.style.cssText = `
 		padding: 8px 12px;
@@ -173,10 +170,9 @@ export function showTranslationPopup(
 			wordResultEl = wordSection.resultEl;
 		}
 
-		popup.style.visibility = "hidden";
-		document.body.appendChild(popup);
 		positionPopup(popup, anchor);
-		popup.style.visibility = "";
+
+		document.body.appendChild(popup);
 		currentPopup = popup;
 		currentSentenceResultEl = sentenceResultEl;
 		currentWordResultEl = wordResultEl;
@@ -215,18 +211,14 @@ function requestTranslateText(
 			from: "content",
 			to: "background",
 			type: "translate/text",
-			srcLang: "auto",
+			srcLang: "",
 			targetLang,
 			text,
 		})
 		.then((response: TranslateTextResponse) => {
 			if (popupEl !== currentPopup) return;
 			if (response.success) {
-				setResult(
-					resultEl,
-					response.translatedText || "(no translation)",
-					"success",
-				);
+				setResult(resultEl, response.translatedText || "(no translation)", "success");
 			} else {
 				setResult(resultEl, response.error || "Translation failed", "error");
 			}
@@ -251,46 +243,29 @@ function setResult(el: HTMLElement, text: string, status: PopupStatus) {
 function positionPopup(popup: HTMLElement, anchor: HTMLElement) {
 	const anchorRect = anchor.getBoundingClientRect();
 	const gap = POPUP_GAP;
+
+	let top = anchorRect.bottom + gap;
+	let left = anchorRect.left;
+
 	const viewportWidth = window.innerWidth;
 	const viewportHeight = window.innerHeight;
+
 	const popupWidth = popup.offsetWidth;
 	const popupHeight = popup.offsetHeight;
 
-	type Candidate = { top: number; left: number };
-
-	const candidates: Candidate[] = [
-		{ top: anchorRect.bottom + gap, left: anchorRect.left },
-		{ top: anchorRect.bottom + gap, left: anchorRect.right - popupWidth },
-		{ top: anchorRect.top - popupHeight - gap, left: anchorRect.left },
-		{
-			top: anchorRect.top - popupHeight - gap,
-			left: anchorRect.right - popupWidth,
-		},
-	];
-
-	let best: Candidate | null = null;
-
-	for (const candidate of candidates) {
-		const fits =
-			candidate.top >= 8 &&
-			candidate.left >= 8 &&
-			candidate.top + popupHeight <= viewportHeight - 8 &&
-			candidate.left + popupWidth <= viewportWidth - 8;
-
-		if (fits) {
-			best = candidate;
-			break;
-		}
-
-		if (!best) {
-			best = candidate;
-		}
+	if (left + popupWidth > viewportWidth - 8) {
+		left = Math.max(8, viewportWidth - popupWidth - 8);
 	}
 
-	if (best) {
-		popup.style.top = `${Math.max(8, best.top)}px`;
-		popup.style.left = `${Math.max(8, best.left)}px`;
+	if (top + popupHeight > viewportHeight - 8) {
+		top = anchorRect.top - popupHeight - gap;
 	}
+
+	top = Math.max(8, top);
+	left = Math.max(8, left);
+
+	popup.style.top = `${top}px`;
+	popup.style.left = `${left}px`;
 }
 
 export function updateTranslationPopup(
@@ -331,10 +306,7 @@ export function cancelCloseDelay() {
 	}
 }
 
-export function startCloseDelay(
-	callback: () => void,
-	ms = POPUP_CLOSE_DELAY_MS,
-) {
+export function startCloseDelay(callback: () => void, ms = POPUP_CLOSE_DELAY_MS) {
 	cancelCloseDelay();
 	closeTimer = setTimeout(callback, ms);
 }

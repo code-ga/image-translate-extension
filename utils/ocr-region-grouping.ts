@@ -16,10 +16,7 @@ function convexHull(points: Point[]): Point[] {
 	const sorted = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
 	const lower: Point[] = [];
 	for (const p of sorted) {
-		while (
-			lower.length >= 2 &&
-			cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0
-		) {
+		while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
 			lower.pop();
 		}
 		lower.push(p);
@@ -27,10 +24,7 @@ function convexHull(points: Point[]): Point[] {
 	const upper: Point[] = [];
 	for (let i = sorted.length - 1; i >= 0; i--) {
 		const p = sorted[i];
-		while (
-			upper.length >= 2 &&
-			cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0
-		) {
+		while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
 			upper.pop();
 		}
 		upper.push(p);
@@ -51,12 +45,7 @@ function getPolygon(box: OCRBox): Point[] {
 	];
 }
 
-function computeBounds(points: Point[]): {
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-} {
+function computeBounds(points: Point[]): { top: number; left: number; width: number; height: number } {
 	if (points.length === 0) return { top: 0, left: 0, width: 0, height: 0 };
 	let minX = Infinity;
 	let minY = Infinity;
@@ -76,10 +65,7 @@ function verticalOverlap(a: OCRBox, b: OCRBox): number {
 	const aBottom = a.box.y + a.box.height;
 	const bTop = b.box.y;
 	const bBottom = b.box.y + b.box.height;
-	const overlap = Math.max(
-		0,
-		Math.min(aBottom, bBottom) - Math.max(aTop, bTop),
-	);
+	const overlap = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
 	const minHeight = Math.min(a.box.height, b.box.height);
 	return minHeight > 0 ? overlap / minHeight : 0;
 }
@@ -89,10 +75,7 @@ function horizontalOverlap(a: OCRBox, b: OCRBox): number {
 	const aRight = a.box.x + a.box.width;
 	const bLeft = b.box.x;
 	const bRight = b.box.x + b.box.width;
-	const overlap = Math.max(
-		0,
-		Math.min(aRight, bRight) - Math.max(aLeft, bLeft),
-	);
+	const overlap = Math.max(0, Math.min(aRight, bRight) - Math.max(aLeft, bLeft));
 	const minWidth = Math.min(a.box.width, b.box.width);
 	return minWidth > 0 ? overlap / minWidth : 0;
 }
@@ -100,8 +83,7 @@ function horizontalOverlap(a: OCRBox, b: OCRBox): number {
 function isSameLine(a: OCRBox, b: OCRBox, avgHeight: number): boolean {
 	return (
 		verticalOverlap(a, b) > SAME_LINE_VERTICAL_OVERLAP_RATIO &&
-		Math.abs(b.box.x - (a.box.x + a.box.width)) <
-			avgHeight * SAME_LINE_HORIZONTAL_GAP_RATIO
+		Math.abs(b.box.x - (a.box.x + a.box.width)) < avgHeight * SAME_LINE_HORIZONTAL_GAP_RATIO
 	);
 }
 
@@ -114,14 +96,13 @@ function isStacked(a: OCRBox, b: OCRBox, avgHeight: number): boolean {
 }
 
 function areAdjacent(a: OCRBox, b: OCRBox, avgHeight: number): boolean {
+	console.log(`Checking adjacency between boxes: ${a.text} and ${b.text}`, isSameLine(a, b, avgHeight), isStacked(a, b, avgHeight));
 	return isSameLine(a, b, avgHeight) || isStacked(a, b, avgHeight);
 }
 
 function buildAdjacency(boxes: OCRBox[], avgHeight: number): boolean[][] {
 	const n = boxes.length;
-	const adj: boolean[][] = Array.from({ length: n }, () =>
-		new Array(n).fill(false),
-	);
+	const adj: boolean[][] = Array.from({ length: n }, () => new Array(n).fill(false));
 	for (let i = 0; i < n; i++) {
 		for (let j = i + 1; j < n; j++) {
 			if (areAdjacent(boxes[i], boxes[j], avgHeight)) {
@@ -144,8 +125,7 @@ function findComponents(adj: boolean[][]): number[][] {
 		visited[i] = true;
 		const component: number[] = [];
 		while (stack.length > 0) {
-			const node = stack.pop();
-			if (node === undefined) continue;
+			const node = stack.pop()!;
 			component.push(node);
 			for (let j = 0; j < n; j++) {
 				if (adj[node][j] && !visited[j]) {
