@@ -6,8 +6,19 @@ import type {
 	TranslateCompleteMessage,
 	TranslateProgressMessage,
 } from "@/types";
+import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
 import { createElementState } from "@/utils/element-state";
-import { processCanvas, processImage } from "@/utils/ocr-pipeline";
+import {
+	getExtensionSettings,
+	isUrlAllowedInSettings,
+} from "@/utils/extension-settings";
+import { getCachedOcr, storeCachedOcr } from "@/utils/ocr-cache";
+import {
+	processCanvas,
+	processImage,
+	registerOcrResultListener,
+	resolveBestImageUrl,
+} from "@/utils/ocr-pipeline";
 import {
 	addOcrBoxes,
 	clearOcrOverlays,
@@ -15,16 +26,26 @@ import {
 	removeOverlay,
 	updateElementOverlayPosition,
 } from "@/utils/overlay";
-import { getExtensionSettings, isUrlAllowedInSettings } from "@/utils/extension-settings";
 import { showToast } from "@/utils/toast";
-import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
 import { setDefaultTargetLang } from "@/utils/translation-popup";
 
 const imageState = createElementState<HTMLImageElement>();
 const canvasState = createElementState<HTMLCanvasElement>();
 
-function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
+function renderImageOverlay(
+	img: HTMLImageElement,
+	ocrRegions: OCRRegion[],
+): boolean {
 	const currentSrc = img.currentSrc || img.src;
+	const oldOverlay = imageState.overlayMap.get(img);
+	if (oldOverlay) removeOverlay(oldOverlay);
+	imageState.overlayMap.delete(img);
+
+	if (ocrRegions.length === 0) {
+		imageState.processed.delete(img);
+		imageState.resizeObserver.unobserve(img);
+		return false;
+	}
 
 	if (
 		imageState.processed.has(img) &&
@@ -41,12 +62,8 @@ function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
 			);
 			updateElementOverlayPosition(img, existingOverlay);
 		}
-		return;
+		return true;
 	}
-
-	const oldOverlay = imageState.overlayMap.get(img);
-	if (oldOverlay) removeOverlay(oldOverlay);
-	imageState.overlayMap.delete(img);
 
 	imageState.processed.set(img, currentSrc);
 
@@ -62,10 +79,23 @@ function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
 
 	imageState.resizeObserver.observe(img);
 	imageState.schedulePositionUpdate();
+	return true;
 }
 
-function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrRegions: OCRRegion[]) {
+function renderCanvasOverlay(
+	canvas: HTMLCanvasElement,
+	ocrRegions: OCRRegion[],
+): boolean {
 	const canvasKey = canvas.toDataURL();
+	const oldOverlay = canvasState.overlayMap.get(canvas);
+	if (oldOverlay) removeOverlay(oldOverlay);
+	canvasState.overlayMap.delete(canvas);
+
+	if (ocrRegions.length === 0) {
+		canvasState.processed.delete(canvas);
+		canvasState.resizeObserver.unobserve(canvas);
+		return false;
+	}
 
 	if (
 		canvasState.processed.has(canvas) &&
@@ -77,12 +107,8 @@ function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrRegions: OCRRegion[])
 			addOcrBoxes(existingOverlay, canvas.width, canvas.height, ocrRegions);
 			updateElementOverlayPosition(canvas, existingOverlay);
 		}
-		return;
+		return true;
 	}
-
-	const oldOverlay = canvasState.overlayMap.get(canvas);
-	if (oldOverlay) removeOverlay(oldOverlay);
-	canvasState.overlayMap.delete(canvas);
 
 	canvasState.processed.set(canvas, canvasKey);
 
@@ -98,47 +124,194 @@ function renderCanvasOverlay(canvas: HTMLCanvasElement, ocrRegions: OCRRegion[])
 
 	canvasState.resizeObserver.observe(canvas);
 	canvasState.schedulePositionUpdate();
+	return true;
+}
+
+const IMAGE_SOURCE_ATTRIBUTES = [
+	"src",
+	"srcset",
+	"data-src",
+	"data-original",
+	"data-original-src",
+	"data-lazy-src",
+	"data-lazy-srcset",
+	"data-srcset",
+	"data-lazy-loaded-src",
+	"data-full-src",
+	"data-actual-src",
+	"data-url",
+	"data-image",
+];
+const imageGenerations = new WeakMap<HTMLImageElement, number>();
+
+function getImageLogContext(img: HTMLImageElement, source: string) {
+	return {
+		source,
+		currentSrc: img.currentSrc,
+		src: img.src,
+		complete: img.complete,
+		naturalWidth: img.naturalWidth,
+		naturalHeight: img.naturalHeight,
+		page: window.location.href,
+	};
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+	if (error instanceof Error && error.message) return error.message;
+	if (typeof error === "string" && error) return error;
+	return fallback;
+}
+
+function serializeError(error: unknown) {
+	if (error instanceof Error) {
+		return {
+			name: error.name,
+			message: error.message,
+			stack: error.stack,
+		};
+	}
+	return { value: String(error) };
+}
+
+function isImageCandidate(img: HTMLImageElement): boolean {
+	const width = img.naturalWidth || img.width || 0;
+	const height = img.naturalHeight || img.height || 0;
+	if (width < 30 || height < 30) return false;
+	const style = getComputedStyle(img);
+	return (
+		style.display !== "none" &&
+		style.visibility !== "hidden" &&
+		style.opacity !== "0"
+	);
+}
+
+function watchImageSource(img: HTMLImageElement) {
+	imageState.observeElementAttributes(img, IMAGE_SOURCE_ATTRIBUTES, () => {
+		processNewImage(img);
+	});
+	imageState.observeElementEvents(img, ["load", "error"], (event) => {
+		if (event.type === "error") {
+			const source = resolveBestImageUrl(img);
+			console.warn("[image-translate] Image load failed", {
+				...getImageLogContext(img, source),
+				error: { type: event.type, target: event.target },
+			});
+		}
+		processNewImage(img);
+	});
+}
+
+function isCurrentImageAttempt(
+	img: HTMLImageElement,
+	generation: number,
+	source: string,
+): boolean {
+	return (
+		imageGenerations.get(img) === generation &&
+		resolveBestImageUrl(img) === source
+	);
+}
+
+function reportImageError(
+	img: HTMLImageElement,
+	source: string,
+	stage: string,
+	error: unknown,
+) {
+	const message = getErrorMessage(error, "Image processing failed");
+	const context = {
+		...getImageLogContext(img, source),
+		stage,
+		error: serializeError(error),
+	};
+	console.error("[image-translate] Image processing failed", context);
+	showToast(`OCR failed for ${source}: ${message}`, "error");
+	browser.runtime
+		.sendMessage({
+			from: "content",
+			to: "background",
+			type: "extension/error",
+			error: `OCR failed for ${source}: ${message}`,
+			context,
+		})
+		.catch(() => {});
 }
 
 function observeImageSrc(img: HTMLImageElement) {
-	imageState.observeElementAttributes(img, ["src", "srcset"], () => {
-		processNewImage(img);
+	watchImageSource(img);
+}
+async function processNewImage(img: HTMLImageElement) {
+	watchImageSource(img);
+	if (!isImageCandidate(img)) return;
+
+	const source = resolveBestImageUrl(img);
+	if (!source) {
+		console.info("[image-translate] Waiting for an image source", {
+			...getImageLogContext(img, source),
+		});
+		return;
+	}
+	if (imageState.processingSet.has(img)) return;
+
+	const generation = (imageGenerations.get(img) || 0) + 1;
+	imageGenerations.set(img, generation);
+	imageState.processingSet.add(img);
+
+	const cached = await getCachedOcr(source);
+	if (cached) {
+		imageState.processingSet.delete(img);
+		console.info("[image-translate] OCR cache hit", {
+			...getImageLogContext(img, source),
+			generation,
+		});
+		if (isCurrentImageAttempt(img, generation, source)) {
+			renderImageOverlay(img, cached);
+			observeImageSrc(img);
+		}
+		return;
+	}
+
+	console.info("[image-translate] Processing image", {
+		...getImageLogContext(img, source),
+		generation,
 	});
+
+	processImage(
+		img,
+		(ocrData) => {
+			if (!isCurrentImageAttempt(img, generation, source)) {
+				console.warn("[image-translate] Ignoring stale OCR result", {
+					...getImageLogContext(img, source),
+					generation,
+				});
+				return;
+			}
+			const hasRegions = renderImageOverlay(img, ocrData);
+			if (ocrData.length > 0) {
+				storeCachedOcr(source, ocrData);
+			}
+			observeImageSrc(img);
+			if (!hasRegions) {
+				console.info("[image-translate] OCR found no text regions", {
+					...getImageLogContext(img, source),
+					generation,
+				});
+			}
+		},
+		(error) => {
+			if (imageGenerations.get(img) === generation) {
+				imageState.processingSet.delete(img);
+			}
+			if (!isCurrentImageAttempt(img, generation, source)) return;
+			reportImageError(img, source, "ocr", error);
+		},
+	);
 }
 
 function observeCanvasSize(canvas: HTMLCanvasElement) {
 	canvasState.observeElementAttributes(canvas, ["width", "height"], () => {
 		processNewCanvas(canvas);
 	});
-}
-
-function processNewImage(img: HTMLImageElement) {
-	if (imageState.processingSet.has(img)) return;
-	imageState.processingSet.add(img);
-	processImage(
-		img,
-		(ocrData) => {
-			renderImageOverlay(img, ocrData);
-			observeImageSrc(img);
-		},
-		() => {
-			imageState.processingSet.delete(img);
-		},
-		(error) => {
-			showToast(
-				error instanceof Error ? error.message : error,
-				"error",
-			);
-			browser.runtime
-				.sendMessage({
-					from: "content",
-					to: "background",
-					type: "extension/error",
-					error: error instanceof Error ? error.message : error,
-				})
-				.catch(() => { });
-		},
-	);
 }
 
 function processNewCanvas(canvas: HTMLCanvasElement) {
@@ -154,8 +327,16 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 			canvasState.processingSet.delete(canvas);
 		},
 		(error) => {
+			const message = error instanceof Error ? error.message : String(error);
+			const context = {
+				width: canvas.width,
+				height: canvas.height,
+				stage: "canvas-ocr",
+				error: serializeError(error),
+			};
+			console.error("[image-translate] Canvas processing failed", context);
 			showToast(
-				error instanceof Error ? error.message : error,
+				`OCR failed for canvas ${canvas.width}x${canvas.height}: ${message}`,
 				"error",
 			);
 			browser.runtime
@@ -163,9 +344,10 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 					from: "content",
 					to: "background",
 					type: "extension/error",
-					error: error instanceof Error ? error.message : error,
+					error: `OCR failed for canvas ${canvas.width}x${canvas.height}: ${message}`,
+					context,
 				})
-				.catch(() => { });
+				.catch(() => {});
 		},
 	);
 }
@@ -174,14 +356,23 @@ async function syncSettingsTargetLang() {
 	try {
 		const settings = await getExtensionSettings();
 		setDefaultTargetLang(settings.targetLang || "vi");
-	} catch {
-		// keep previous default on failure
+	} catch (error) {
+		console.error("[image-translate] Failed to sync target language", {
+			error: serializeError(error),
+		});
 	}
 }
 
 function findImageBySrc(src: string): HTMLImageElement | null {
 	for (const img of Array.from(document.images)) {
-		if (img.currentSrc === src || img.src === src) return img;
+		if (
+			img.currentSrc === src ||
+			img.src === src ||
+			IMAGE_SOURCE_ATTRIBUTES.some(
+				(attribute) => img.getAttribute(attribute) === src,
+			)
+		)
+			return img;
 	}
 	return null;
 }
@@ -192,6 +383,17 @@ function findCanvasByIndex(index: number): HTMLCanvasElement | null {
 }
 
 let liveObserver: MutationObserver | null = null;
+
+function runAutoTranslate() {
+	autoTranslateIfAllowed().catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error("[image-translate] Auto-translate failed", {
+			page: window.location.href,
+			error: serializeError(error),
+		});
+		showToast(`Auto-translate failed: ${message}`, "error");
+	});
+}
 
 async function autoTranslateIfAllowed() {
 	const settings = await getExtensionSettings();
@@ -204,7 +406,27 @@ async function autoTranslateIfAllowed() {
 		liveObserver.disconnect();
 	}
 
+	imageState.resetAll();
+	canvasState.resetAll();
+
+	const totalImages = Array.from(document.images).length;
+	const eligibleImages = Array.from(document.images).filter((img) => {
+		const w = img.naturalWidth || img.width || 0;
+		const h = img.naturalHeight || img.height || 0;
+		if (w < 30 || h < 30) return false;
+		const s = getComputedStyle(img);
+		return (
+			s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0"
+		);
+	}).length;
+	console.info("[image-translate] Auto-translate starting", {
+		url: window.location.href,
+		totalImages,
+		eligibleImages,
+	});
+
 	for (const img of Array.from(document.images)) {
+		watchImageSource(img);
 		const width = img.naturalWidth || img.width || 0;
 		const height = img.naturalHeight || img.height || 0;
 		if (width < 30 || height < 30) continue;
@@ -217,6 +439,10 @@ async function autoTranslateIfAllowed() {
 			continue;
 		processNewImage(img);
 	}
+
+	console.info("[image-translate] Auto-translate starting", {
+		totalCanvases: document.querySelectorAll("canvas").length,
+	});
 
 	for (let i = 0; i < document.querySelectorAll("canvas").length; i++) {
 		const canvas = document.querySelectorAll("canvas")[i];
@@ -261,7 +487,7 @@ function collectImageInfo(): ImageInfoWithStatus[] {
 			status: imageState.processingSet.has(img)
 				? "processing"
 				: imageState.processed.has(img) &&
-					imageState.processed.get(img) === (img.currentSrc || img.src)
+						imageState.processed.get(img) === (img.currentSrc || img.src)
 					? "done"
 					: "pending",
 		});
@@ -295,11 +521,12 @@ export default defineContentScript({
 	runAt: "document_idle",
 	main() {
 		console.log("Content script loaded for URL:", window.location.href);
-		autoTranslateIfAllowed();
+		registerOcrResultListener();
+		runAutoTranslate();
 		syncSettingsTargetLang();
 
 		const urlPolling = startUrlPolling(() => {
-			autoTranslateIfAllowed();
+			runAutoTranslate();
 		});
 		urlPolling.start();
 
@@ -328,63 +555,83 @@ export default defineContentScript({
 			};
 		});
 
-		browser.runtime.onMessage.addListener((msg: AppMessage, _sender, sendResponse) => {
-			switch (msg.type) {
-				case "ui/get-images":
-					sendResponse({ type: "ui/images-list", images: collectImageInfo() });
-					return true;
-				case "ui/get-image-status":
-					sendResponse({ type: "ui/image-status-list", images: collectImageInfo() });
-					return true;
-				case "ui/get-canvases":
-					sendResponse({ type: "ui/canvas-list", canvases: collectCanvasInfo() });
-					return true;
-				case "ui/get-canvas-status":
-					sendResponse({
-						type: "ui/canvas-status-list",
-						canvases: collectCanvasInfo(),
-					});
-					return true;
-				case "translate/images":
-					handleTranslateImages(msg.urls, currentContext);
-					return true;
-				case "translate/canvases":
-					handleTranslateCanvases(msg.indices);
-					return true;
-				case "settings/changed":
-					autoTranslateIfAllowed();
-					setDefaultTargetLang(msg.settings.targetLang || "vi");
-					break;
-				case "background/translate": {
-					const escapedUrl = msg.url.replace(/"/g, '\\"');
-					for (const img of Array.from(document.images)) {
-						if (img.currentSrc === escapedUrl || img.src === escapedUrl) {
-							processNewImage(img);
+		browser.runtime.onMessage.addListener(
+			(msg: AppMessage, _sender, sendResponse) => {
+				switch (msg.type) {
+					case "ui/get-images":
+						sendResponse({
+							type: "ui/images-list",
+							images: collectImageInfo(),
+						});
+						return true;
+					case "ui/get-image-status":
+						sendResponse({
+							type: "ui/image-status-list",
+							images: collectImageInfo(),
+						});
+						return true;
+					case "ui/get-canvases":
+						sendResponse({
+							type: "ui/canvas-list",
+							canvases: collectCanvasInfo(),
+						});
+						return true;
+					case "ui/get-canvas-status":
+						sendResponse({
+							type: "ui/canvas-status-list",
+							canvases: collectCanvasInfo(),
+						});
+						return true;
+					case "translate/images":
+						handleTranslateImages(msg.urls, currentContext);
+						return true;
+					case "translate/canvases":
+						handleTranslateCanvases(msg.indices);
+						return true;
+					case "settings/changed":
+						runAutoTranslate();
+						setDefaultTargetLang(msg.settings.targetLang || "vi");
+						break;
+					case "background/translate": {
+						for (const img of Array.from(document.images)) {
+							const lazySrc = img.getAttribute("data-src");
+							if (
+								img.currentSrc === msg.url ||
+								img.src === msg.url ||
+								lazySrc === msg.url
+							) {
+								processNewImage(img);
+							}
 						}
+						break;
 					}
-					break;
 				}
-			}
-		});
+			},
+		);
 	},
 });
 
-async function handleTranslateImages(urls: string[], currentContext?: ContextMenuContext | null) {
+async function handleTranslateImages(
+	urls: string[],
+	currentContext?: ContextMenuContext | null,
+) {
 	const total = urls.length;
 	let successCount = 0;
 
 	for (let i = 0; i < urls.length; i++) {
 		const url = urls[i];
 		const img = (() => {
-			const contextElement = currentContext ?
-				(currentContext?.target ??
+			const contextElement = currentContext
+				? (currentContext?.target ??
 					document.elementsFromPoint(currentContext.x, currentContext.y)[0])
-				: null
+				: null;
 			if (contextElement instanceof HTMLImageElement) {
-				console.log("we attempted to fetched context menu element", contextElement)
-				return contextElement
+				console.info("[image-translate] Context menu image selected", {
+					source: contextElement.currentSrc || contextElement.src,
+				});
+				return contextElement;
 			}
-			return findImageBySrc(url)
+			return findImageBySrc(url);
 		})();
 		if (img) {
 			processNewImage(img);
@@ -471,7 +718,7 @@ function collectCanvasInfo(): CanvasInfoWithStatus[] {
 			status: canvasState.processingSet.has(canvas)
 				? "processing"
 				: canvasState.processed.has(canvas) &&
-					canvasState.processed.get(canvas) === canvas.toDataURL()
+						canvasState.processed.get(canvas) === canvas.toDataURL()
 					? "done"
 					: "pending",
 		});

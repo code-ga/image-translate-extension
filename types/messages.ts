@@ -1,37 +1,52 @@
+import type { OCRRegion } from "./index";
+
 export type MessageRoute = {
 	from: "content" | "background" | "offscreen";
 	to: "background" | "content" | "offscreen" | "all";
 };
 
-export type Message<T extends string, P extends object = {}> =
-	MessageRoute & {
-		type: T;
-	} & P;
+export type Message<
+	T extends string,
+	P extends object = Record<string, never>,
+> = MessageRoute & {
+	type: T;
+} & P;
+
+export type OcrImagePayload = {
+	fetchingType: "url" | "base64";
+	imageData: string;
+	headers?: Record<string, string>;
+};
+
+export type OcrResultItem =
+	| { success: true; data: OCRRegion[] }
+	| { success: false; error: string };
 
 export type ProcessOcrMessage = Message<
 	"ocr/process",
+	OcrImagePayload & { requestId?: string }
+>;
+
+export type OcrResultMessage = Message<
+	"ocr/result",
 	{
-		fetchingType: "url" | "base64";
-		imageData: string;
-		headers?: Record<string, string>;
+		requestId: string;
+		success: boolean;
+		ocrData?: OCRRegion[];
+		error?: string;
 	}
 >;
 
 export type BatchRunOcrMessage = Message<
 	"offscreen/batch-run-ocr",
 	{
-		items: {
-			fetchingType: "url" | "base64";
-			imageData: string;
-		}[];
+		items: OcrImagePayload[];
 	}
 >;
 
-export type BatchRunOcrResponse = {
-	success: boolean;
-	results?: any[];
-	error?: string;
-};
+export type BatchRunOcrResponse =
+	| { success: true; results: OcrResultItem[] }
+	| { success: false; error: string };
 
 export type GetSettingsMessage = Message<"settings/get">;
 
@@ -40,7 +55,9 @@ export type NotifySettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains:
+				| string
+				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
 		};
 	}
@@ -51,7 +68,9 @@ export type SettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains:
+				| string
+				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
 		};
 	}
@@ -155,11 +174,13 @@ export type ExtensionErrorMessage = Message<
 	"extension/error",
 	{
 		error: string;
+		context?: Record<string, unknown>;
 	}
 >;
 
 export type AppMessage =
 	| ProcessOcrMessage
+	| OcrResultMessage
 	| BatchRunOcrMessage
 	| GetSettingsMessage
 	| NotifySettingsChangedMessage

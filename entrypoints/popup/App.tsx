@@ -1,6 +1,6 @@
 import "./App.css";
-import { useState, useEffect, useCallback } from "react";
-import { DomainPattern } from "@/types";
+import { useCallback, useEffect, useState } from "react";
+import type { DomainPattern } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { SUPPORTED_LANGUAGES } from "@/utils/languages";
 
@@ -65,7 +65,11 @@ function App() {
 				any
 			>;
 			const settings = {
-				...(current[STORAGE_KEY] || { enabledDomains: [], enabled: true, targetLang: "vi" }),
+				...(current[STORAGE_KEY] || {
+					enabledDomains: [],
+					enabled: true,
+					targetLang: "vi",
+				}),
 				...updates,
 			};
 			await browser.storage.sync.set({ [STORAGE_KEY]: settings });
@@ -99,12 +103,16 @@ function App() {
 
 			try {
 				const [imagesResponse, canvasesResponse] = await Promise.all([
-					browser.tabs.sendMessage(tab.id, { type: "get-image-status" }),
-					browser.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
+					browser.tabs.sendMessage(tab.id, {
+						type: "ui/get-image-status",
+					}),
+					browser.tabs.sendMessage(tab.id, {
+						type: "ui/get-canvas-status",
+					}),
 				]);
 				if (
 					imagesResponse &&
-					(imagesResponse as any).type === "image-status-list"
+					(imagesResponse as any).type === "ui/image-status-list"
 				) {
 					setImages((imagesResponse as any).images);
 					setImageCount((imagesResponse as any).images.length);
@@ -116,7 +124,7 @@ function App() {
 				}
 				if (
 					canvasesResponse &&
-					(canvasesResponse as any).type === "canvas-status-list"
+					(canvasesResponse as any).type === "ui/canvas-status-list"
 				) {
 					setCanvases((canvasesResponse as any).canvases);
 					setCanvasCount((canvasesResponse as any).canvases.length);
@@ -219,9 +227,7 @@ function App() {
 		await saveSettings({ enabled: !globalEnabled });
 	};
 
-	const changeTargetLang = async (
-		e: React.ChangeEvent<HTMLSelectElement>,
-	) => {
+	const changeTargetLang = async (e: React.ChangeEvent<HTMLSelectElement>) => {
 		const lang = e.target.value;
 		setTargetLang(lang);
 		await saveSettings({ targetLang: lang });
@@ -400,11 +406,11 @@ function App() {
 					<div className="setting-item">
 						<div className="setting-label">
 							<span className="setting-title">Allowed Domains</span>
-						<span className="setting-desc">
-							{enabledDomains.length === 0
-								? "No domains configured"
-								: `Translation active for ${enabledDomains.length} domain(s)`}
-						</span>
+							<span className="setting-desc">
+								{enabledDomains.length === 0
+									? "No domains configured"
+									: `Translation active for ${enabledDomains.length} domain(s)`}
+							</span>
 						</div>
 					</div>
 

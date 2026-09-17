@@ -1,12 +1,12 @@
 import type { AppMessage, TranslateTextResponse } from "@/types";
 import { DEFAULT_TARGET_LANG, SUPPORTED_LANGUAGES } from "./languages";
 import {
+	injectPopupStyles,
 	POPUP_BORDER_RADIUS,
 	POPUP_BOX_SHADOW,
 	POPUP_COLORS,
 	POPUP_FONT,
 	POPUP_Z_INDEX,
-	injectPopupStyles,
 } from "./popup-base";
 
 const POPUP_DEBOUNCE_MS = 300;
@@ -28,7 +28,10 @@ export function setDefaultTargetLang(lang: string): void {
 	cachedTargetLang = lang;
 }
 
-function createTranslationRow(label: string, originalText: string): { container: HTMLElement; resultEl: HTMLElement } {
+function createTranslationRow(
+	label: string,
+	originalText: string,
+): { container: HTMLElement; resultEl: HTMLElement } {
 	const container = document.createElement("div");
 	container.style.cssText = `
 		padding: 8px 12px;
@@ -219,7 +222,11 @@ function requestTranslateText(
 		.then((response: TranslateTextResponse) => {
 			if (popupEl !== currentPopup) return;
 			if (response.success) {
-				setResult(resultEl, response.translatedText || "(no translation)", "success");
+				setResult(
+					resultEl,
+					response.translatedText || "(no translation)",
+					"success",
+				);
 			} else {
 				setResult(resultEl, response.error || "Translation failed", "error");
 			}
@@ -255,7 +262,10 @@ function positionPopup(popup: HTMLElement, anchor: HTMLElement) {
 		{ top: anchorRect.bottom + gap, left: anchorRect.left },
 		{ top: anchorRect.bottom + gap, left: anchorRect.right - popupWidth },
 		{ top: anchorRect.top - popupHeight - gap, left: anchorRect.left },
-		{ top: anchorRect.top - popupHeight - gap, left: anchorRect.right - popupWidth },
+		{
+			top: anchorRect.top - popupHeight - gap,
+			left: anchorRect.right - popupWidth,
+		},
 	];
 
 	let best: Candidate | null = null;
@@ -321,7 +331,10 @@ export function cancelCloseDelay() {
 	}
 }
 
-export function startCloseDelay(callback: () => void, ms = POPUP_CLOSE_DELAY_MS) {
+export function startCloseDelay(
+	callback: () => void,
+	ms = POPUP_CLOSE_DELAY_MS,
+) {
 	cancelCloseDelay();
 	closeTimer = setTimeout(callback, ms);
 }

@@ -9,6 +9,31 @@
 - Error UX: Toast notifications for OCR/translation failures instead of silent death.
 - Auto-translate: Restored page-load + SPA auto-translation that got lost during refactor.
 - PaddleOCR: Still fighting text-box grouping 😭. Convex hull + adjacency heuristics added but imperfect.
+- **Communication fix**: Replaced `sendMessage` await-response pattern with fire-and-forget + event-based result delivery to fix Chrome MV3 timeout on large OCR processing.
+- **SPA navigation fix**: `autoTranslateIfAllowed()` now resets element state before reprocessing, fixing images not updating on page navigation (Mangadex next page).
+- **Popup fix**: Fixed message type mismatch — popup now sends `ui/get-image-status` / `ui/get-canvas-status` matching content script handlers.
+- **OCR cache**: Added `utils/ocr-cache.ts` with 7-day TTL in `browser.storage.local` to prevent re-OCR of previously processed images.
+- **ProcessingSet guard fix**: Removed premature `onComplete` callback from `processImage` that was clearing `processingSet` immediately with fire-and-forget pattern.
+
+---
+
+## Communication timeout fix — 2026-09-16
+
+**Problem**: `browser.runtime.sendMessage` from content script to background timed out during large OCR processing. Background OCR completed successfully but content script never received the response, causing "OCR processing failed" errors for images from `cubari.moe` (cross-origin from `services.f-ck.me`).
+
+**Root cause**: Chrome MV3 `sendMessage` has a timeout for pending responses. Long-running OCR processing exceeded this timeout, killing the pending request before `sendResponse` could be called.
+
+**Fix**: Implemented fire-and-forget messaging pattern:
+- **`types/messages.ts`**: Added `OcrResultMessage` type (`ocr/result`) with `requestId`, `success`, `ocrData`/`error`
+- **`utils/ocr-pipeline.ts`**: Added `pendingOcrRequests` Map, `generateRequestId()`, `registerOcrResultListener()`. `sendOcrWithBase64()`/`sendOcrWithUrl()`/`processCanvas()` now send messages fire-and-forget (no `await`) and register one-time result listeners keyed by `requestId` with 60s timeout
+- **`entrypoints/background.ts`**: Stores `sender.tab.id` in OCR batch items. `sendOcrResult()`/`sendOcrFailure()` now dispatch results via `browser.tabs.sendMessage(tabId, {type: "ocr/result", ...})` instead of `sendResponse`
+- **`entrypoints/content.ts`**: Calls `registerOcrResultListener()` at startup to receive OCR results
+
+### Flow
+1. Content script sends `ocr/process` (fire-and-forget, includes `requestId`)
+2. Background processes OCR, then sends `ocr/result` to content script's tab via `browser.tabs.sendMessage`
+3. Content script listener matches `requestId`, resolves the pending request, calls `onSuccess`/`onError`
+4. If no result within 60s, timeout fires and calls `onError("OCR processing timed out")`
 
 ---
 
@@ -72,4 +97,10 @@ This is the very unsolved problem that may annoy the user and me. The problem is
 
 ---
 
-*Logged between debugging sessions on Aug 2026*
+## OCR reliability and batch isolation — 2026-09-13 16:28
+
+- Replaced noisy payload/object logging with contextual OCR stage, source, dimensions, error name/message/stack logs.
+- Added lazy-image source/load watching and stale-result guards; zero OCR boxes no longer permanently mark an image processed.
+- Isolated URL fetch, base64 decode, and OCR failures so one image cannot suppress successful siblings.
+- Added typed per-item offscreen responses and one-shot response wrappers.
+- Validation passed: `bun run compile`, `bun run build`, Biome checks, and `git diff --check`.
