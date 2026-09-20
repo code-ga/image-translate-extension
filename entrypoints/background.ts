@@ -103,6 +103,12 @@ export default defineBackground({
 								}
 							}
 						});
+						browser.runtime.sendMessage({
+							from: "background",
+							to: "all",
+							type: "extension/error",
+							error: msg.error,
+						});
 						sendResponse({ ok: true });
 						return true;
 					case "translate/text": {

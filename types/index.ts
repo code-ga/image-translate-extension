@@ -30,14 +30,14 @@ export type ImageInfoWithStatus = {
 	currentSrc: string;
 	width: number;
 	height: number;
-	status: "pending" | "processing" | "done";
+	status: "pending" | "processing" | "done" | "error";
 };
 
 export type CanvasInfoWithStatus = {
 	index: number;
 	width: number;
 	height: number;
-	status: "pending" | "processing" | "done";
+	status: "pending" | "processing" | "done" | "error";
 };
 
 export * from "./messages";

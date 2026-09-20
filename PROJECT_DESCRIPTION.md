@@ -10,7 +10,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 |---|---|
 | `entrypoints/content.ts` | Content script — orchestrates OCR processing, overlay rendering, DOM observation, and auto-translation on page load/URL change |
 | `entrypoints/background.ts` | Service worker — batches OCR requests, manages offscreen document, handles extension settings and context menus |
-| `entrypoints/popup/App.tsx` | Popup UI — shows image list and triggers batch translation |
+| `entrypoints/popup/App.tsx` | Popup UI — polls image/canvas status from the content script on an interval, shows the image/canvas list with status badges, triggers batch translation, and manages the Settings tab. Communicates with the content script via the `ui/` message protocol and listens (via `browser.runtime.onMessage`) for `translate/progress` / `translate/complete` / `extension/error` events to stay in sync. |
 | `entrypoints/offscreen/offscreen.ts` | Offscreen document — runs the PaddleOCR model engine |
 | `entrypoints/offscreen/index.html` | HTML anchor for the offscreen document |
 
@@ -19,12 +19,12 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | File | Role |
 |---|---|
 | `utils/overlay.ts` | Shared overlay DOM creation, positioning, box rendering, and container management |
-| `utils/element-state.ts` | Generic element tracking (processing set, processed map, overlay map, mutation maps, resize observer) with lifecycle cleanup |
+| `utils/element-state.ts` | Generic element tracking (processing set, processed map, overlay map, mutation maps, resize observer, **error map**) with lifecycle cleanup; exposes `setError`/`getError`/`clearError` for per-element error tracking |
 | `utils/ocr-pipeline.ts` | Image URL resolution (srcset), canvas-to-base64, fetch-to-base64, and sending OCR jobs to background |
 | `utils/ocr-region-grouping.ts` | Spatial grouping of OCR word/line boxes into logical text regions using adjacency heuristics and convex hull |
 | `utils/dom-observer.ts` | Live MutationObserver for new DOM nodes, SPA URL change polling, used by content script for auto-translation |
 | `utils/asset-cache.ts` | IndexedDB asset caching, cache URL validation, fetch wrapper installation |
-| `utils/ocr-batcher.ts` | PaddleOcrService model initialization, batch OCR execution, and region grouping |
+| `utils/ocr-batcher.ts` | PaddleOcrService model initialization, **per-item independent batch OCR execution via Promise.allSettled**, and region grouping |
 | `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking; defines `ExtensionSettings` (including `targetLang`) with `DEFAULT_SETTINGS` defaults and `getExtensionSettings()` merge |
 | `utils/domain-matcher.ts` | URL domain/pattern matching for extension enablement rules |
 | `utils/constants.ts` | Shared constants (offscreen paths, message targets) |
@@ -60,6 +60,8 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 15. **Translation**: `background.ts` receives `translate/text` messages, de-duplicates and batches them per `srcLang:targetLang` key via `enqueueTranslation`/`flushTranslationBatch`, and runs `translateDynamic()` (HuggingFace `Xenova/opus-mt-<src>-<target>` transformer pipeline). Result returned to the popup via `sendResponse`.
 16. **Extension settings**: `extension-settings.ts` centralizes settings retrieval (`enabled`, `enabledDomains`, `targetLang`) with `DEFAULT_SETTINGS` defaults and domain permission checking, eliminating duplication in `background.ts`
 17. **Popup settings UI**: `entrypoints/popup/App.tsx` Settings tab renders a Default Target Language `<select>` bound to `SUPPORTED_LANGUAGES`; saving writes `targetLang` to `browser.storage.sync` and broadcasts `settings/notify-changed` so content scripts cache the new default
+18. **Per-item independent OCR**: `ocr-batcher.ts` wraps each image's OCR call in its own try/catch via `Promise.allSettled`, so one image's failure cannot affect others in the same batch. Offscreen handler (`offscreen.ts`) preserves per-item results.
+19. **Error tracking & popup display**: `element-state.ts` adds `errorMap` with `setError`/`getError`/`clearError`; `content.ts` marks failed images/canvases as "error" status before calling `onComplete`; `types/index.ts` extends `ImageInfoWithStatus`/`CanvasInfoWithStatus` with `"error"` status; popup (`App.tsx`) shows error badges on tabs, "Error" label in list items, and `.status-error` / `.tab-badge.error` styles.
 
 ## Key Design Patterns
 
@@ -68,9 +70,13 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 - **Overlay utilities**: Shared positioning, box creation, and container management in `overlay.ts` avoid duplicated CSS and DOM logic
 - **Popup base**: `popup-base.ts` centralizes z-index, font, border-radius, box-shadow, color themes, and keyframe animation injection; `toast.ts` and `translation-popup.ts` both consume it to eliminate duplication
 - **Observer lifecycle**: Every resize observer, mutation observer, and overlay DOM node is tracked and cleaned up on element removal or src change
+- **Per-item OCR independence**: `ocr-batcher.ts` uses `Promise.allSettled` with per-item try/catch to ensure one image's OCR failure cannot cascade to other images in the batch
+- **Persistent error state**: `element-state.ts` `errorMap` tracks per-element errors through the processing lifecycle; errors survive `onComplete` cleanup so the popup can display them via `collectImageInfo`/`collectCanvasInfo`
 
 ## Notes & Future Work
 
 - **`srcLang` is currently empty**: `translation-popup.ts` sends `srcLang: ""` with every `translate/text` request, which resolves to the model name `Xenova/opus-mt--<targetLang>`. A valid HuggingFace opus-mt model requires a concrete source language (e.g. `Xenova/opus-mt-en-vi`). Adding automatic source-language detection (e.g. via a language-classification model) and/or a source-language setting is needed for `translateDynamic()` to load the correct model. The target-language plumbing added here is in place and ready for that.
+- **Popup↔content script message-type contract (2026-09-19)**: The popup's `pollPageData` and `progressListener` previously checked non-prefixed message types (`"image-status-list"`, `"translate-images-progress"`, `"extension-error"`) that never matched what the content script / background actually send (`"ui/image-status-list"`, `"translate/progress"`, `"extension/error"`), so the image/canvas lists always stayed empty ("No images found on this page"). Fixed in `App.tsx`: response checks now match the `ui/`-prefixed types and progress listener matches `translate/progress`/`translate/complete`/`extension/error`. `pollPageData` uses `Promise.allSettled` so a missing content script (browser-restricted URLs like `chrome://`/`about:`, not-yet-loaded tabs) only resets state when both polls fail — preserving a partial result. The background `extension/error` handler now relays errors via `runtime.sendMessage` (in addition to the existing `tabs.sendMessage` broadcast) so the popup, which lives in an extension-page context unreachable via `tabs.sendMessage`, also receives them. `types/messages.ts` `ImageStatusListResponse`/`CanvasStatusListResponse` status unions now include `"error"`.
 - **Settings broadcast repair**: The popup previously sent `notify-settings-changed`, which the background never matched (it listened for `settings/notify-changed`), so `settings/changed` was never relayed to content scripts. This has been corrected so settings now propagate live.
 - **Translation batching**: per-`srcLang:targetLang` batches mean each target language is translated by a separate model instance; the cache in `ocr-batcher.ts`/`translation.ts` keys loaded models by `<src>-<target>`.
+- **Async independent OCR + error tracking (2026-09-18)**: Implemented per-item independent OCR in `ocr-batcher.ts` using `Promise.allSettled` with individual try/catch. Added `errorMap` to `element-state.ts` with `setError`/`getError`/`clearError` methods. Extended `ImageInfoWithStatus`/`CanvasInfoWithStatus` status union with `"error"`. Updated `content.ts` to mark failed elements as error before `onComplete` and include error status in `collectImageInfo`/`collectCanvasInfo`. Updated popup `App.tsx` with error count state, error badges on tabs, "Error" label, and CSS styles (`.status-error`, `.tab-badge.error`). This fixes the "No images found" popup issue when OCR fails on some images — errored images now remain visible with "Error" status instead of reverting to "pending".

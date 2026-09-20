@@ -1,6 +1,6 @@
 import "./App.css";
-import { useState, useEffect, useCallback } from "react";
-import { DomainPattern } from "@/types";
+import { useCallback, useEffect, useState } from "react";
+import type { DomainPattern } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { SUPPORTED_LANGUAGES } from "@/utils/languages";
 
@@ -12,13 +12,13 @@ type ImageInfo = {
 	currentSrc: string;
 	width: number;
 	height: number;
-	status: string;
+	status: "pending" | "processing" | "done" | "error";
 };
 type CanvasInfo = {
 	index: number;
 	width: number;
 	height: number;
-	status: string;
+	status: "pending" | "processing" | "done" | "error";
 };
 
 function App() {
@@ -38,6 +38,8 @@ function App() {
 	const [canvasCount, setCanvasCount] = useState(0);
 	const [imageProcessingCount, setImageProcessingCount] = useState(0);
 	const [canvasProcessingCount, setCanvasProcessingCount] = useState(0);
+	const [imageErrorCount, setImageErrorCount] = useState(0);
+	const [canvasErrorCount, setCanvasErrorCount] = useState(0);
 
 	const loadSettings = useCallback(async () => {
 		const result = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
@@ -65,7 +67,11 @@ function App() {
 				any
 			>;
 			const settings = {
-				...(current[STORAGE_KEY] || { enabledDomains: [], enabled: true, targetLang: "vi" }),
+				...(current[STORAGE_KEY] || {
+					enabledDomains: [],
+					enabled: true,
+					targetLang: "vi",
+				}),
 				...updates,
 			};
 			await browser.storage.sync.set({ [STORAGE_KEY]: settings });
@@ -98,43 +104,62 @@ function App() {
 			setCurrentDomain(tab.url || "");
 
 			try {
-				const [imagesResponse, canvasesResponse] = await Promise.all([
-					browser.tabs.sendMessage(tab.id, { type: "get-image-status" }),
-					browser.tabs.sendMessage(tab.id, { type: "get-canvas-status" }),
+				const [imagesResult, canvasesResult] = await Promise.allSettled([
+					browser.tabs.sendMessage(tab.id, { type: "ui/get-image-status" }),
+					browser.tabs.sendMessage(tab.id, { type: "ui/get-canvas-status" }),
 				]);
 				if (
-					imagesResponse &&
-					(imagesResponse as any).type === "image-status-list"
+					imagesResult.status === "fulfilled" &&
+					(imagesResult.value as any)?.type === "ui/image-status-list"
 				) {
-					setImages((imagesResponse as any).images);
-					setImageCount((imagesResponse as any).images.length);
+					const imagesData = (imagesResult.value as any).images;
+					setImages(imagesData);
+					setImageCount(imagesData.length);
 					setImageProcessingCount(
-						(imagesResponse as any).images.filter(
-							(i: ImageInfo) => i.status === "processing",
-						).length,
+						imagesData.filter((i: ImageInfo) => i.status === "processing")
+							.length,
+					);
+					setImageErrorCount(
+						imagesData.filter((i: ImageInfo) => i.status === "error").length,
 					);
 				}
 				if (
-					canvasesResponse &&
-					(canvasesResponse as any).type === "canvas-status-list"
+					canvasesResult.status === "fulfilled" &&
+					(canvasesResult.value as any)?.type === "ui/canvas-status-list"
 				) {
-					setCanvases((canvasesResponse as any).canvases);
-					setCanvasCount((canvasesResponse as any).canvases.length);
+					const canvasesData = (canvasesResult.value as any).canvases;
+					setCanvases(canvasesData);
+					setCanvasCount(canvasesData.length);
 					setCanvasProcessingCount(
-						(canvasesResponse as any).canvases.filter(
-							(c: CanvasInfo) => c.status === "processing",
-						).length,
+						canvasesData.filter((c: CanvasInfo) => c.status === "processing")
+							.length,
+					);
+					setCanvasErrorCount(
+						canvasesData.filter((c: CanvasInfo) => c.status === "error").length,
 					);
 				}
+				if (
+					imagesResult.status === "rejected" &&
+					canvasesResult.status === "rejected"
+				) {
+					console.error(
+						"Failed to get image/canvas status:",
+						imagesResult.reason,
+					);
+					setImages([]);
+					setCanvases([]);
+					setImageCount(0);
+					setCanvasCount(0);
+					setImageProcessingCount(0);
+					setCanvasProcessingCount(0);
+					setImageErrorCount(0);
+					setCanvasErrorCount(0);
+				}
 			} catch (_err) {
-				setImages([]);
-				setCanvases([]);
-				setImageCount(0);
-				setCanvasCount(0);
-				setImageProcessingCount(0);
-				setCanvasProcessingCount(0);
+				console.error("Poll page data inner error:", _err);
 			}
 		} catch (_err) {
+			console.error("Poll page data outer error:", _err);
 			// ignore polling errors when tab is not active
 		}
 	}, []);
@@ -151,8 +176,8 @@ function App() {
 
 		const progressListener = (msg: any) => {
 			if (
-				msg.type === "translate-images-complete" ||
-				msg.type === "translate-images-progress"
+				msg.type === "translate/progress" ||
+				msg.type === "translate/complete"
 			) {
 				if (msg.error) {
 					setError(msg.error);
@@ -160,7 +185,7 @@ function App() {
 				pollPageData();
 			}
 
-			if (msg.type === "extension-error") {
+			if (msg.type === "extension/error") {
 				setError(msg.error);
 			}
 		};
@@ -219,9 +244,7 @@ function App() {
 		await saveSettings({ enabled: !globalEnabled });
 	};
 
-	const changeTargetLang = async (
-		e: React.ChangeEvent<HTMLSelectElement>,
-	) => {
+	const changeTargetLang = async (e: React.ChangeEvent<HTMLSelectElement>) => {
 		const lang = e.target.value;
 		setTargetLang(lang);
 		await saveSettings({ targetLang: lang });
@@ -233,6 +256,8 @@ function App() {
 				return "Translating...";
 			case "done":
 				return "Done";
+			case "error":
+				return "Error";
 			default:
 				return "";
 		}
@@ -244,6 +269,8 @@ function App() {
 				return "status-processing";
 			case "done":
 				return "status-done";
+			case "error":
+				return "status-error";
 			default:
 				return "status-pending";
 		}
@@ -266,6 +293,9 @@ function App() {
 					{imageProcessingCount > 0 && (
 						<span className="tab-badge processing">{imageProcessingCount}</span>
 					)}
+					{imageErrorCount > 0 && (
+						<span className="tab-badge error">{imageErrorCount}</span>
+					)}
 				</button>
 				<button
 					className={`tab ${tab === "canvases" ? "active" : ""}`}
@@ -276,6 +306,9 @@ function App() {
 						<span className="tab-badge processing">
 							{canvasProcessingCount}
 						</span>
+					)}
+					{canvasErrorCount > 0 && (
+						<span className="tab-badge error">{canvasErrorCount}</span>
 					)}
 				</button>
 				<button
@@ -400,11 +433,11 @@ function App() {
 					<div className="setting-item">
 						<div className="setting-label">
 							<span className="setting-title">Allowed Domains</span>
-						<span className="setting-desc">
-							{enabledDomains.length === 0
-								? "No domains configured"
-								: `Translation active for ${enabledDomains.length} domain(s)`}
-						</span>
+							<span className="setting-desc">
+								{enabledDomains.length === 0
+									? "No domains configured"
+									: `Translation active for ${enabledDomains.length} domain(s)`}
+							</span>
 						</div>
 					</div>
 

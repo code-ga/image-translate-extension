@@ -1,5 +1,45 @@
 # Changes Log
 
+## 2026-09-19 — Fixed popup "No images found" caused by message type mismatch
+
+The popup never populated its image/canvas list because the response-type checks and progress-listener message types used the wrong (non-prefixed) values, and a single failing `browser.tabs.sendMessage` rejected the whole `Promise.all` poll.
+
+**Modified**: `entrypoints/popup/App.tsx`, `entrypoints/background.ts`, `types/messages.ts`
+
+**Key changes**:
+- `entrypoints/popup/App.tsx`: `pollPageData` now checks the correct response types (`"ui/image-status-list"`, `"ui/canvas-status-list"`) matching what the content script sends (`content.ts`), so images/canvases populate correctly. Switched the parallel `browser.tabs.sendMessage` calls from `Promise.all` to `Promise.allSettled` so a missing/unreachable content script (e.g. `chrome://` pages, not-yet-loaded tabs) only clears state when both fail, preserving a successful result from one channel. Each fulfilled result is checked with `.status === "fulfilled"` plus the `type` guard before reading its payload.
+- `entrypoints/popup/App.tsx`: Progress listener (`progressListener`) now matches the actual message types sent from content/background: `"translate/progress"` + `"translate/complete"` (replacing `"translate-images-progress"`/`"translate-images-complete"`) and `"extension/error"` (replacing `"extension-error"`), so the popup stays in sync with translate progress and errors.
+- `entrypoints/popup/App.tsx`: Added `setImageErrorCount(0)` / `setCanvasErrorCount(0)` to the both-failed reset branch for consistency with the empty-state reset.
+- `entrypoints/background.ts`: The `extension/error` handler now also calls `browser.runtime.sendMessage({ type: "extension/error", error })` in addition to the existing `tabs.sendMessage` broadcast, so the popup (an extension-page context unreachable via `tabs.sendMessage`) receives extension errors and displays them.
+- `types/messages.ts`: `ImageStatusListResponse` and `CanvasStatusListResponse` status unions now include `"error"` to match `ImageInfoWithStatus` / `CanvasInfoWithStatus` in `types/index.ts`.
+
+**Verification**:
+- `bun run compile` (tsc --noEmit) — zero TypeScript errors
+- `bunx biome check` on modified files — no new lint violations introduced (warning/error counts reduced vs. baseline; remaining `format`/`noExplicitAny`/`noUnusedImports` findings are pre-existing CRLF line-ending drift and untouched-code `any` usage)
+
+---
+
+## 2026-09-18 — Async independent OCR + per-item error tracking & popup error display
+
+Fixed two critical issues: (1) OCR batch failures cascading — one image error caused entire batch to fail; (2) Popup "No images found" when OCR errors occurred — errored images disappeared because they reverted to "pending" status with no persistent error tracking.
+
+**Modified**: `utils/ocr-batcher.ts`, `entrypoints/offscreen/offscreen.ts`, `types/index.ts`, `utils/element-state.ts`, `entrypoints/content.ts`, `entrypoints/popup/App.tsx`, `entrypoints/popup/App.css`
+
+**Key changes**:
+- `utils/ocr-batcher.ts`: Rewrote `runBatchOcr` to use `Promise.allSettled` with per-item try/catch. Each image's OCR call is now independent — `model.batchRecognize([buffer], ...)` is called per image, and failures are caught individually. Returns `RunBatchResultItem[]` where each item is either `{success: true, data: OCRRegion[]}` or `{success: false, error: string}`.
+- `entrypoints/offscreen/offscreen.ts`: Defensive per-item error handling preserved; `runBatchOcr` no longer throws on individual failures.
+- `types/index.ts`: Extended `ImageInfoWithStatus` and `CanvasInfoWithStatus` status union with `"error"`.
+- `utils/element-state.ts`: Added `errorMap: Map<T, string>` with `setError(element, message)`, `getError(element)`, `clearError(element)` methods; `resetElementState` and `cleanup` now clear `errorMap`.
+- `entrypoints/content.ts`: In `processNewImage`/`processNewCanvas`, call `clearError` before starting new OCR attempt; in error callback, call `setError` BEFORE `onComplete` to persist error through cleanup; `collectImageInfo`/`collectCanvasInfo` now check `errorMap` first (status precedence: processing → error → done → pending).
+- `entrypoints/popup/App.tsx`: Added `imageErrorCount`/`canvasErrorCount` state; `pollPageData` counts `"error"` status items; tabs show error badges (`.tab-badge.error`); `getStatusLabel` returns "Error"; `getStatusClass` returns "status-error"; local `ImageInfo`/`CanvasInfo` types updated with `"error"` status.
+- `entrypoints/popup/App.css`: Added `.status-error` (red background/border) and `.tab-badge.error` (red badge) styles.
+
+**Verification**:
+- `bun run compile` — zero TypeScript errors
+- `bunx biome check` on modified files — no new lint violations (pre-existing `any` warnings in untouched code remain)
+
+---
+
 ## 2026-08-28 — Default target language selection (popup settings + hover popup)
 
 Added a user-configurable default target language plus per-translation language selection in the hover popup, and fixed the settings broadcast so language changes propagate live to content scripts.

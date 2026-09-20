@@ -1,6 +1,5 @@
 import ort from "onnxruntime-web";
-import { type PaddleOcrResult, PaddleOcrService, V6_SMALL_MODEL } from "ppu-paddle-ocr/web";
-import { MAX_CONCURRENT } from "@/config/ocr-config";
+import { type PaddleOcrResult, PaddleOcrService } from "ppu-paddle-ocr/web";
 import type { OCRBox, OCRRegion } from "@/types";
 import { groupOcrBoxesIntoRegions } from "./ocr-region-grouping";
 
@@ -54,62 +53,83 @@ export async function initOcrModel(): Promise<PaddleOcrService> {
 			executionProviders: ["gpu", "webgpu", "webgl", "wasm"],
 			enableCpuMemArena: false,
 			enableMemPattern: false,
-			graphOptimizationLevel: "disabled"
+			graphOptimizationLevel: "disabled",
 		},
 	});
 	await ocrModelInstance.initialize();
-
 
 	console.log("Model successfully fetched and cached in memory!");
 	return ocrModelInstance;
 }
 
-type RunBatchResultItem = { success: true; data: OCRRegion[] } | { success: false; error: string }
-export async function runBatchOcr(items: BatchOcrItem[]): Promise<RunBatchResultItem[]> {
+type RunBatchResultItem =
+	| { success: true; data: OCRRegion[] }
+	| { success: false; error: string };
+export async function runBatchOcr(
+	items: BatchOcrItem[],
+): Promise<RunBatchResultItem[]> {
 	if ("TextDetector" in window) {
 		console.log(window.TextDetector);
 	}
 	const model = await initOcrModel();
-	const imageBuffers = items.map((item) =>
-		base64ToArrayBuffer(item.imageData),
-	);
 
-	console.log(`Running batch OCR on ${imageBuffers.length} images...`);
-	const results = await model.batchRecognize(imageBuffers, {
-		settle: true,
-		strategy: "per-box",
-	});
+	console.log(`Running batch OCR on ${items.length} images...`);
+	const results = await Promise.allSettled(
+		items.map(async (item) => {
+			try {
+				const buffer = base64ToArrayBuffer(item.imageData);
+				const ocrResult = await model.batchRecognize([buffer], {
+					settle: true,
+					strategy: "per-box",
+				});
+				const result = ocrResult[0];
+				if (result.status === "fulfilled") {
+					const rawBoxes: OCRBox[] = (
+						result.value as PaddleOcrResult
+					).lines.flatMap((value) =>
+						value.flatMap((a) => {
+							if (a.text.length === 0) return [];
+							const x = a.box.x;
+							const y = a.box.y;
+							const width = a.box.width;
+							const height = a.box.height;
+							return [
+								{
+									text: a.text,
+									box: { x, y, width, height },
+									polygon: [
+										{ x, y },
+										{ x: x + width, y },
+										{ x: x + width, y: y + height },
+										{ x, y: y + height },
+									],
+								},
+							];
+						}),
+					);
+					const regions = groupOcrBoxesIntoRegions(rawBoxes);
+					console.log(
+						`OCR completed. Found ${regions.length} regions.`,
+						regions,
+					);
+					return { success: true as const, data: regions };
+				} else {
+					return {
+						success: false as const,
+						error: `${new String(result.reason)}`,
+					};
+				}
+			} catch (error) {
+				return { success: false as const, error: String(error) };
+			}
+		}),
+	);
 
 	return results.map((result): RunBatchResultItem => {
 		if (result.status === "fulfilled") {
-			const rawBoxes: OCRBox[] = (
-				result.value as PaddleOcrResult
-			).lines.flatMap((value) =>
-				value.flatMap((a) => {
-					if (a.text.length === 0) return [];
-					const x = a.box.x;
-					const y = a.box.y;
-					const width = a.box.width;
-					const height = a.box.height;
-					return [
-						{
-							text: a.text,
-							box: { x, y, width, height },
-							polygon: [
-								{ x, y },
-								{ x: x + width, y },
-								{ x: x + width, y: y + height },
-								{ x, y: y + height },
-							],
-						},
-					];
-				}),
-			);
-			const regions = groupOcrBoxesIntoRegions(rawBoxes);
-			console.log(`OCR completed. Found ${regions.length} regions.`, regions);
-			return { success: true, data: regions };
+			return result.value;
 		} else {
-			return { success: false, error: `${new String(result.reason)}` };
+			return { success: false, error: String(result.reason) };
 		}
 	});
 }

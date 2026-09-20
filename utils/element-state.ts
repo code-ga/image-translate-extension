@@ -5,6 +5,7 @@ export function createElementState<T extends Element>() {
 	const overlayMap = new Map<T, HTMLElement>();
 	const mutationMap = new Map<T, MutationObserver>();
 	const processingSet = new Set<T>();
+	const errorMap = new Map<T, string>();
 
 	const resizeObserver = new ResizeObserver((entries) => {
 		for (const entry of entries) {
@@ -42,6 +43,7 @@ export function createElementState<T extends Element>() {
 		if (overlay) overlay.remove();
 		overlayMap.delete(element);
 		processed.delete(element);
+		errorMap.delete(element);
 		resizeObserver.unobserve(element);
 		const mo = mutationMap.get(element);
 		if (mo) {
@@ -49,6 +51,18 @@ export function createElementState<T extends Element>() {
 			mutationMap.delete(element);
 		}
 		processingSet.delete(element);
+	}
+
+	function setError(element: T, message: string) {
+		errorMap.set(element, message);
+	}
+
+	function getError(element: T): string | undefined {
+		return errorMap.get(element);
+	}
+
+	function clearError(element: T) {
+		errorMap.delete(element);
 	}
 
 	function observeElementAttributes(
@@ -77,6 +91,7 @@ export function createElementState<T extends Element>() {
 		overlayMap.clear();
 		processed.clear();
 		processingSet.clear();
+		errorMap.clear();
 	}
 
 	return {
@@ -84,10 +99,14 @@ export function createElementState<T extends Element>() {
 		overlayMap,
 		mutationMap,
 		processingSet,
+		errorMap,
 		resizeObserver,
 		schedulePositionUpdate,
 		resetElementState,
 		observeElementAttributes,
+		setError,
+		getError,
+		clearError,
 		cleanup,
 	};
 }

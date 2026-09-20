@@ -82,7 +82,7 @@ export type ImageStatusListResponse = {
 		currentSrc: string;
 		width: number;
 		height: number;
-		status: "pending" | "processing" | "done";
+		status: "pending" | "processing" | "done" | "error";
 	}[];
 };
 
@@ -92,7 +92,7 @@ export type CanvasStatusListResponse = {
 		index: number;
 		width: number;
 		height: number;
-		status: "pending" | "processing" | "done";
+		status: "pending" | "processing" | "done" | "error";
 	}[];
 };
 

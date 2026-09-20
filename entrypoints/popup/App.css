@@ -91,6 +91,11 @@
 	color: white;
 }
 
+.tab-badge.error {
+	background: #f44336;
+	color: white;
+}
+
 .list-panel {
 	flex: 1;
 	overflow-y: auto;
@@ -164,6 +169,12 @@
 	background: #1b3a1b;
 	color: #4caf50;
 	border: 1px solid #2e5a2e;
+}
+
+.status-error {
+	background: #3a1b1b;
+	color: #f44336;
+	border: 1px solid #5a2e2e;
 }
 
 @keyframes pulse {
