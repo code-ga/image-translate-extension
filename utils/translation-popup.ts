@@ -1,5 +1,5 @@
 import type { AppMessage, TranslateTextResponse } from "@/types";
-import { DEFAULT_TARGET_LANG, SUPPORTED_LANGUAGES } from "./languages";
+import { DEFAULT_TARGET_LANG } from "./languages";
 import {
 	POPUP_BORDER_RADIUS,
 	POPUP_BOX_SHADOW,
@@ -19,7 +19,6 @@ let currentPopup: HTMLDivElement | null = null;
 let currentSentenceResultEl: HTMLElement | null = null;
 let currentWordResultEl: HTMLElement | null = null;
 let currentWordText: string = "";
-let currentSelect: HTMLSelectElement | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let closeTimer: ReturnType<typeof setTimeout> | null = null;
 let cachedTargetLang: string = DEFAULT_TARGET_LANG;
@@ -28,39 +27,43 @@ export function setDefaultTargetLang(lang: string): void {
 	cachedTargetLang = lang;
 }
 
-function createTranslationRow(label: string, originalText: string): { container: HTMLElement; resultEl: HTMLElement } {
+function createTranslationRow(
+	label: string,
+	originalText: string,
+	initialTranslation?: string,
+): { container: HTMLElement; resultEl: HTMLElement } {
 	const container = document.createElement("div");
 	container.style.cssText = `
-		padding: 8px 12px;
-	`;
+ 		padding: 8px 12px;
+ 	`;
 
 	const labelEl = document.createElement("div");
 	labelEl.textContent = label;
 	labelEl.style.cssText = `
-		font-size: 10px;
-		color: #808090;
-		margin-bottom: 3px;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-	`;
+ 		font-size: 10px;
+ 		color: #808090;
+ 		margin-bottom: 3px;
+ 		text-transform: uppercase;
+ 		letter-spacing: 0.5px;
+ 	`;
 
 	const originalEl = document.createElement("div");
 	originalEl.textContent = originalText;
 	originalEl.style.cssText = `
-		font-size: 11px;
-		color: #a0a0b0;
-		margin-bottom: 4px;
-		word-break: break-all;
-	`;
+ 		font-size: 11px;
+ 		color: #a0a0b0;
+ 		margin-bottom: 4px;
+ 		word-break: break-all;
+ 	`;
 	originalEl.title = originalText;
 
 	const resultEl = document.createElement("div");
 	resultEl.style.cssText = `
-		font-size: 12px;
-		color: ${POPUP_COLORS.info.text};
-		word-break: break-word;
-	`;
-	resultEl.textContent = "Translating...";
+ 		font-size: 12px;
+ 		color: ${POPUP_COLORS.info.text};
+ 		word-break: break-word;
+ 	`;
+	resultEl.textContent = initialTranslation || "Translating...";
 
 	container.append(labelEl, originalEl, resultEl);
 
@@ -72,6 +75,7 @@ export function showTranslationPopup(
 	text: string,
 	word: string,
 	onReady?: (popup: HTMLDivElement) => void,
+	existingTranslation?: string,
 ): HTMLDivElement | null {
 	if (debounceTimer) {
 		clearTimeout(debounceTimer);
@@ -125,40 +129,7 @@ export function showTranslationPopup(
 		header.append(headerLabel, headerText);
 		popup.appendChild(header);
 
-		const langRow = document.createElement("div");
-		langRow.style.cssText = `
-			display: flex;
-			align-items: center;
-			gap: 6px;
-			padding: 8px 12px;
-			border-bottom: 1px solid ${POPUP_COLORS.info.border};
-		`;
-		const langLabel = document.createElement("span");
-		langLabel.textContent = "Translate to:";
-		langLabel.style.cssText = `font-size: 11px; color: #a0a0b0;`;
-		const select = document.createElement("select");
-		select.style.cssText = `
-			flex: 1;
-			font-size: 12px;
-			padding: 2px 6px;
-			border-radius: 4px;
-			border: 1px solid #3a3a4a;
-			background: #252536;
-			color: #e4e6eb;
-			outline: none;
-			cursor: pointer;
-		`;
-		for (const lang of SUPPORTED_LANGUAGES) {
-			const option = document.createElement("option");
-			option.value = lang.code;
-			option.textContent = lang.label;
-			select.appendChild(option);
-		}
-		select.value = cachedTargetLang;
-		langRow.append(langLabel, select);
-		popup.appendChild(langRow);
-
-		const sentenceSection = createTranslationRow("Sentence", text);
+		const sentenceSection = createTranslationRow("Sentence", text, existingTranslation);
 		popup.appendChild(sentenceSection.container);
 		const sentenceResultEl = sentenceSection.resultEl;
 
@@ -177,19 +148,12 @@ export function showTranslationPopup(
 		currentSentenceResultEl = sentenceResultEl;
 		currentWordResultEl = wordResultEl;
 		currentWordText = word;
-		currentSelect = select;
 
-		select.addEventListener("change", () => {
-			const targetLang = select.value;
-			requestTranslateText(text, targetLang, sentenceResultEl, popup);
-			if (wordResultEl) {
-				requestTranslateText(word, targetLang, wordResultEl, popup);
-			}
-		});
-
-		requestTranslateText(text, select.value, sentenceResultEl, popup);
+		if (!existingTranslation) {
+			requestTranslateText(text, cachedTargetLang, sentenceResultEl, popup);
+		}
 		if (wordResultEl) {
-			requestTranslateText(word, select.value, wordResultEl, popup);
+			requestTranslateText(word, cachedTargetLang, wordResultEl, popup);
 		}
 
 		onReady?.(popup);
@@ -296,7 +260,6 @@ export function dismissTranslationPopup() {
 	currentSentenceResultEl = null;
 	currentWordResultEl = null;
 	currentWordText = "";
-	currentSelect = null;
 }
 
 export function cancelCloseDelay() {

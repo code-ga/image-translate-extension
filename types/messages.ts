@@ -1,3 +1,6 @@
+import type { OCRRegion } from "./index";
+import type { TranslationError } from "@/src/translation/types";
+
 export type MessageRoute = {
 	from: "content" | "background" | "offscreen";
 	to: "background" | "content" | "offscreen" | "all";
@@ -151,6 +154,20 @@ export type TranslateTextResponse = {
 	error?: string;
 };
 
+export type TranslateRegionsMessage = Message<
+	"translate/regions",
+	{
+		regions: OCRRegion[];
+	}
+>;
+
+export type TranslateRegionsResponse = {
+	success: boolean;
+	regions?: OCRRegion[];
+	errors?: TranslationError[];
+	error?: string;
+};
+
 export type ExtensionErrorMessage = Message<
 	"extension/error",
 	{
@@ -171,6 +188,7 @@ export type AppMessage =
 	| TranslateImagesCommand
 	| TranslateCanvasesCommand
 	| TranslateTextMessage
+	| TranslateRegionsMessage
 	| TranslateProgressMessage
 	| TranslateCompleteMessage
 	| ContextMenuTranslateMessage

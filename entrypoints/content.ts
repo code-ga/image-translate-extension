@@ -5,6 +5,7 @@ import type {
 	OCRRegion,
 	TranslateCompleteMessage,
 	TranslateProgressMessage,
+	TranslateRegionsMessage,
 } from "@/types";
 import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
 import { createElementState } from "@/utils/element-state";
@@ -106,6 +107,29 @@ function renderCanvasOverlay(
 	canvasState.schedulePositionUpdate();
 }
 
+async function translateAndUpdateOverlay(
+	element: HTMLImageElement | HTMLCanvasElement,
+	ocrRegions: OCRRegion[],
+	getOverlay: () => HTMLElement | undefined,
+	renderOverlay: (regions: OCRRegion[]) => void,
+): Promise<void> {
+	try {
+		const response = await browser.runtime.sendMessage({
+			from: "content",
+			to: "background",
+			type: "translate/regions",
+			regions: ocrRegions,
+		} satisfies TranslateRegionsMessage);
+
+		if (response?.success && response.regions) {
+			const translatedRegions = response.regions;
+			renderOverlay(translatedRegions);
+		}
+	} catch (error) {
+		console.error("Translation failed:", error);
+	}
+}
+
 function observeImageSrc(img: HTMLImageElement) {
 	imageState.observeElementAttributes(img, ["src", "srcset"], () => {
 		processNewImage(img);
@@ -127,6 +151,13 @@ function processNewImage(img: HTMLImageElement) {
 		(ocrData) => {
 			renderImageOverlay(img, ocrData);
 			observeImageSrc(img);
+			// Trigger translation after OCR completes
+			translateAndUpdateOverlay(
+				img,
+				ocrData,
+				() => imageState.overlayMap.get(img),
+				(regions) => renderImageOverlay(img, regions),
+			);
 		},
 		() => {
 			imageState.processingSet.delete(img);
@@ -156,6 +187,13 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 		(ocrData) => {
 			renderCanvasOverlay(canvas, ocrData);
 			observeCanvasSize(canvas);
+			// Trigger translation after OCR completes
+			translateAndUpdateOverlay(
+				canvas,
+				ocrData,
+				() => canvasState.overlayMap.get(canvas),
+				(regions) => renderCanvasOverlay(canvas, regions),
+			);
 		},
 		() => {
 			canvasState.processingSet.delete(canvas);

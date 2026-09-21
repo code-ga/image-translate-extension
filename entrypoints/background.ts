@@ -1,27 +1,33 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
+import { translationEngine, translateRegions } from "@/src/translation/engine";
+import type { TranslationResponse, TranslationUnit, NllbLanguageCode } from "@/src/translation/types";
 import type {
 	AppMessage,
+	OCRRegion,
 	ProcessOcrMessage,
+	TranslateRegionsMessage,
+	TranslateRegionsResponse,
 	TranslateTextMessage,
 	TranslateTextResponse,
 } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { getExtensionSettings } from "@/utils/extension-settings";
-import { translateDynamic } from "@/utils/translation";
 
 export default defineBackground({
 	type: "module",
-	main() {
+	async main() {
 		browser.runtime.onStartup.addListener(async () => {
 			await ensureOffscreenRunning();
+			await translationEngine.warmup();
 			console.log("model init successful");
 		});
 
 		browser.runtime.onInstalled.addListener(async () => {
 			console.log("browser extension installed");
 			await ensureOffscreenRunning();
+			await translationEngine.warmup();
 			console.log("model init successful");
 		});
 
@@ -112,7 +118,11 @@ export default defineBackground({
 						sendResponse({ ok: true });
 						return true;
 					case "translate/text": {
-						enqueueTranslation(msg.text, msg.srcLang, msg.targetLang, sendResponse);
+						handleTranslateText(msg, sendResponse);
+						return true;
+					}
+					case "translate/regions": {
+						handleTranslateRegions(msg, sendResponse);
 						return true;
 					}
 				}
@@ -245,84 +255,60 @@ async function flushOcrBatch() {
 	}
 }
 
-interface TranslationBatchItem {
-	text: string;
-	sendResponse: (response: TranslateTextResponse) => void;
-}
-
-interface TranslationBatch {
-	texts: string[];
-	items: TranslationBatchItem[];
-	timer: ReturnType<typeof setTimeout> | null;
-	flushing: boolean;
-}
-
-const translationBatches = new Map<string, TranslationBatch>();
-const TRANSLATION_BATCH_DEBOUNCE_MS = 20;
-
-function enqueueTranslation(
-	text: string,
-	srcLang: string,
-	targetLang: string,
+async function handleTranslateText(
+	msg: TranslateTextMessage,
 	sendResponse: (response: TranslateTextResponse) => void,
-) {
-	const key = `${srcLang}:${targetLang}`;
-	let batch = translationBatches.get(key);
+): Promise<void> {
+	try {
+		const { text, srcLang, targetLang } = msg;
+		const units: TranslationUnit[] = [
+			{
+				id: `text_${Date.now()}`,
+				sourceText: text,
+				bbox: { x: 0, y: 0, width: 0, height: 0 },
+				boxReferences: [],
+				detectedLanguage: (srcLang || "unknown") as TranslationUnit["detectedLanguage"],
+				detectionConfidence: srcLang ? 1 : 0,
+			},
+		];
 
-	if (!batch) {
-		batch = { texts: [], items: [], timer: null, flushing: false };
-		translationBatches.set(key, batch);
-	}
+		const response = await translationEngine.translate({ units, targetLang: targetLang as NllbLanguageCode });
 
-	const existingIndex = batch.texts.indexOf(text);
-	if (existingIndex === -1) {
-		batch.texts.push(text);
-	}
-	batch.items.push({ text, sendResponse });
-
-	if (batch.timer === null && !batch.flushing) {
-		batch.timer = setTimeout(() => {
-			batch.timer = null;
-			flushTranslationBatch(key);
-		}, TRANSLATION_BATCH_DEBOUNCE_MS);
+		if (response.results.length > 0) {
+			sendResponse({
+				success: true,
+				translatedText: response.results[0].translatedText,
+			});
+		} else {
+			sendResponse({
+				success: false,
+				error: response.errors[0]?.message || "No translation result",
+			});
+		}
+	} catch (error) {
+		sendResponse({
+			success: false,
+			error: error instanceof Error ? error.message : "Translation failed",
+		});
 	}
 }
 
-async function flushTranslationBatch(key: string) {
-	const batch = translationBatches.get(key);
-	if (!batch) return;
-
-	batch.flushing = true;
-	const texts = [...batch.texts];
-	const items = [...batch.items];
-	batch.texts = [];
-	batch.items = [];
-
-	const [srcLang, targetLang] = key.split(":");
-
-		try {
-			const results = await translateDynamic(texts, srcLang, targetLang);
-
-			items.forEach((item) => {
-				item.sendResponse({
-					success: true,
-					translatedText: results[item.text],
-				});
-			});
-		} catch (error) {
-		items.forEach((item) => {
-			item.sendResponse({
-				success: false,
-				error: error instanceof Error ? error.message : "Translation failed",
-			});
+async function handleTranslateRegions(
+	msg: TranslateRegionsMessage,
+	sendResponse: (response: TranslateRegionsResponse) => void,
+): Promise<void> {
+	try {
+		const result = await translateRegions(msg.regions);
+		sendResponse({
+			success: true,
+			regions: msg.regions,
+			errors: result.errors,
 		});
-	} finally {
-		batch.flushing = false;
-		if (batch.texts.length > 0) {
-			setTimeout(() => flushTranslationBatch(key), 0);
-		} else if (batch.items.length === 0) {
-			translationBatches.delete(key);
-		}
+	} catch (error) {
+		sendResponse({
+			success: false,
+			error: error instanceof Error ? error.message : "Translation failed",
+		});
 	}
 }
 

@@ -73,12 +73,18 @@ export function addOcrBoxes(
 
 			boxDiv.addEventListener("mouseenter", () => {
 				cancelCloseDelay();
-				showTranslationPopup(boxDiv, regions.text, box.text, (popup) => {
-					popup.addEventListener("mouseenter", cancelCloseDelay);
-					popup.addEventListener("mouseleave", () => {
-						startCloseDelay(() => dismissTranslationPopup(), 1000);
-					});
-				});
+				showTranslationPopup(
+					boxDiv,
+					regions.text,
+					box.text,
+					(popup) => {
+						popup.addEventListener("mouseenter", cancelCloseDelay);
+						popup.addEventListener("mouseleave", () => {
+							startCloseDelay(() => dismissTranslationPopup(), 1000);
+						});
+					},
+					box.translation,
+				);
 			});
 
 			boxDiv.addEventListener("mouseleave", () => {
