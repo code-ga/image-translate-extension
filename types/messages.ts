@@ -1,15 +1,14 @@
-import type { OCRRegion } from "./index";
 import type { TranslationError } from "@/src/translation/types";
+import type { OCRRegion } from "./index";
 
 export type MessageRoute = {
 	from: "content" | "background" | "offscreen";
 	to: "background" | "content" | "offscreen" | "all";
 };
 
-export type Message<T extends string, P extends object = {}> =
-	MessageRoute & {
-		type: T;
-	} & P;
+export type Message<T extends string, P extends object = {}> = MessageRoute & {
+	type: T;
+} & P;
 
 export type ProcessOcrMessage = Message<
 	"ocr/process",
@@ -43,7 +42,9 @@ export type NotifySettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains:
+				| string
+				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
 		};
 	}
@@ -54,7 +55,9 @@ export type SettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains:
+				| string
+				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
 		};
 	}
@@ -168,6 +171,22 @@ export type TranslateRegionsResponse = {
 	error?: string;
 };
 
+export type OffscreenTranslateTextMessage = Message<
+	"offscreen/translate-text",
+	{
+		text: string;
+		srcLang: string;
+		targetLang: string;
+	}
+>;
+
+export type OffscreenTranslateRegionsMessage = Message<
+	"offscreen/translate-regions",
+	{
+		regions: OCRRegion[];
+	}
+>;
+
 export type ExtensionErrorMessage = Message<
 	"extension/error",
 	{
@@ -189,6 +208,8 @@ export type AppMessage =
 	| TranslateCanvasesCommand
 	| TranslateTextMessage
 	| TranslateRegionsMessage
+	| OffscreenTranslateTextMessage
+	| OffscreenTranslateRegionsMessage
 	| TranslateProgressMessage
 	| TranslateCompleteMessage
 	| ContextMenuTranslateMessage

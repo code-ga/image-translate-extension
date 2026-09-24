@@ -1,5 +1,22 @@
 # Changes
 
+## [0.1.0] - 2026-09-21
+
+First public release of Image Translate. This release packages the WXT + React Manifest V3 extension with automatic image/canvas detection, PaddleOCR in an offscreen document, NLLB-200 translation in a Web Worker, automatic source-language detection, hover translation popups, two-level caching, domain settings, context-menu actions, per-item error tracking, and Chrome/Chromium/Edge plus Firefox builds.
+
+See `CHANGELOG.md` for the user-facing release notes and `README.md` for installation, permissions, usage, architecture, and limitations.
+
+Validation for this release: `bun run compile`, `bun run build`, `bun run build:firefox`, `bun run zip`, and `bunx biome check .` pass.
+
+## 2026-09-22 - Translation Runtime Moved to Offscreen
+
+- Removed `translationEngine` and `translateRegions` imports from `entrypoints/background.ts`; the service worker now forwards `offscreen/translate-text` and `offscreen/translate-regions` messages.
+- Added offscreen translation handlers in `entrypoints/offscreen/offscreen.ts`; the browser-like offscreen document owns language detection, the translation engine, and its model worker.
+- Replaced `import.meta.url` worker construction with Vite's `?worker` import in `src/translation/engine.ts`, and made `src/translation/worker.ts` register its message handlers when loaded.
+- Added `TranslationBoxIndex` / `boxIndexes` to preserve OCR-to-translation mapping across worker structured-clone boundaries; `applyTranslationsToRegions()` now maps results into `OCRRegion.translation`.
+- Updated `utils/overlay.ts` to render translated region text and pass cached translations to hover popups.
+- Kept model loading lazy: startup creates the offscreen document but no longer warms up the model in the service worker.
+
 ## 2026-09-21 17:23:13 - Translation Engine Implementation (NLLB-200)
 
 ### Major Features Added

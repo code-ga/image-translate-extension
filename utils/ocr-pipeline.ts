@@ -208,9 +208,7 @@ async function processCanvas(
 		}
 	} catch (error) {
 		console.error("Failed to translate canvas:", error);
-		onError(
-			error instanceof Error ? error : "Failed to translate canvas",
-		);
+		onError(error instanceof Error ? error : "Failed to translate canvas");
 	} finally {
 		onComplete();
 	}

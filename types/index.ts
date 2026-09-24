@@ -11,6 +11,7 @@ export type OCRRegion = {
 	text: string;
 	boxes: OCRBox[];
 	bounds: { top: number; left: number; width: number; height: number };
+	translation?: string;
 };
 
 export type OCRResult = OCRBox[];

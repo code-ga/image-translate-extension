@@ -1,8 +1,8 @@
-import type { OCRBox, OCRRegion } from "@/types";
+import type { OCRRegion } from "@/types";
 import {
-	showTranslationPopup,
-	dismissTranslationPopup,
 	cancelCloseDelay,
+	dismissTranslationPopup,
+	showTranslationPopup,
 	startCloseDelay,
 } from "@/utils/translation-popup";
 
@@ -61,55 +61,54 @@ export function addOcrBoxes(
 	elementHeight: number,
 	ocrRegions: OCRRegion[],
 ) {
-	for (const regions of ocrRegions) {
-		for (const box of regions.boxes) {
-			const fontSize = Math.max(
-				10,
-				((Math.min(box.box.height, box.box.width) * box.box.width) /
-					elementWidth) *
+	for (const region of ocrRegions) {
+		const fontSize = Math.max(
+			10,
+			((Math.min(region.bounds.height, region.bounds.width) *
+				region.bounds.width) /
+				elementWidth) *
 				0.7,
+		);
+		const boxDiv = document.createElement("div");
+
+		boxDiv.addEventListener("mouseenter", () => {
+			cancelCloseDelay();
+			showTranslationPopup(
+				boxDiv,
+				region.text,
+				region.boxes[0]?.text ?? region.text,
+				(popup) => {
+					popup.addEventListener("mouseenter", cancelCloseDelay);
+					popup.addEventListener("mouseleave", () => {
+						startCloseDelay(() => dismissTranslationPopup(), 1000);
+					});
+				},
+				region.translation,
 			);
-			const boxDiv = document.createElement("div");
+		});
 
-			boxDiv.addEventListener("mouseenter", () => {
-				cancelCloseDelay();
-				showTranslationPopup(
-					boxDiv,
-					regions.text,
-					box.text,
-					(popup) => {
-						popup.addEventListener("mouseenter", cancelCloseDelay);
-						popup.addEventListener("mouseleave", () => {
-							startCloseDelay(() => dismissTranslationPopup(), 1000);
-						});
-					},
-					box.translation,
-				);
-			});
+		boxDiv.addEventListener("mouseleave", () => {
+			startCloseDelay(() => dismissTranslationPopup(), 1000);
+		});
 
-			boxDiv.addEventListener("mouseleave", () => {
-				startCloseDelay(() => dismissTranslationPopup(), 1000);
-			});
-
-			boxDiv.style.pointerEvents = "auto";
-			boxDiv.innerText = box.text;
-			boxDiv.style.position = "absolute";
-			boxDiv.style.top = `${(box.box.y / elementHeight) * 100}%`;
-			boxDiv.style.left = `${(box.box.x / elementWidth) * 100}%`;
-			boxDiv.style.width = `${(box.box.width / elementWidth) * 100}%`;
-			boxDiv.style.height = `${(box.box.height / elementHeight) * 100}%`;
-			boxDiv.style.border = "2px dashed #00ff00";
-			boxDiv.style.backgroundColor = "rgba(255, 255, 255, 1)";
-			boxDiv.style.color = "#00ff00";
-			boxDiv.style.textAlign = "center";
-			boxDiv.style.display = "flex";
-			boxDiv.style.alignItems = "center";
-			boxDiv.style.justifyContent = "center";
-			boxDiv.style.fontSize = `${fontSize}px`;
-			boxDiv.style.whiteSpace = "nowrap";
-			boxDiv.style.textOverflow = "ellipsis";
-			overlay.appendChild(boxDiv);
-		}
+		boxDiv.style.pointerEvents = "auto";
+		boxDiv.innerText = region.translation || region.text;
+		boxDiv.style.position = "absolute";
+		boxDiv.style.top = `${(region.bounds.top / elementHeight) * 100}%`;
+		boxDiv.style.left = `${(region.bounds.left / elementWidth) * 100}%`;
+		boxDiv.style.width = `${(region.bounds.width / elementWidth) * 100}%`;
+		boxDiv.style.height = `${(region.bounds.height / elementHeight) * 100}%`;
+		boxDiv.style.border = "2px dashed #00ff00";
+		boxDiv.style.backgroundColor = "rgba(255, 255, 255, 1)";
+		boxDiv.style.color = "#00ff00";
+		boxDiv.style.textAlign = "center";
+		boxDiv.style.display = "flex";
+		boxDiv.style.alignItems = "center";
+		boxDiv.style.justifyContent = "center";
+		boxDiv.style.fontSize = `${fontSize}px`;
+		boxDiv.style.whiteSpace = "nowrap";
+		boxDiv.style.textOverflow = "ellipsis";
+		overlay.appendChild(boxDiv);
 	}
 }
 

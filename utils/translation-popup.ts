@@ -1,12 +1,12 @@
 import type { AppMessage, TranslateTextResponse } from "@/types";
 import { DEFAULT_TARGET_LANG } from "./languages";
 import {
+	injectPopupStyles,
 	POPUP_BORDER_RADIUS,
 	POPUP_BOX_SHADOW,
 	POPUP_COLORS,
 	POPUP_FONT,
 	POPUP_Z_INDEX,
-	injectPopupStyles,
 } from "./popup-base";
 
 const POPUP_DEBOUNCE_MS = 300;
@@ -129,7 +129,11 @@ export function showTranslationPopup(
 		header.append(headerLabel, headerText);
 		popup.appendChild(header);
 
-		const sentenceSection = createTranslationRow("Sentence", text, existingTranslation);
+		const sentenceSection = createTranslationRow(
+			"Sentence",
+			text,
+			existingTranslation,
+		);
 		popup.appendChild(sentenceSection.container);
 		const sentenceResultEl = sentenceSection.resultEl;
 
@@ -182,7 +186,11 @@ function requestTranslateText(
 		.then((response: TranslateTextResponse) => {
 			if (popupEl !== currentPopup) return;
 			if (response.success) {
-				setResult(resultEl, response.translatedText || "(no translation)", "success");
+				setResult(
+					resultEl,
+					response.translatedText || "(no translation)",
+					"success",
+				);
 			} else {
 				setResult(resultEl, response.error || "Translation failed", "error");
 			}
@@ -269,7 +277,10 @@ export function cancelCloseDelay() {
 	}
 }
 
-export function startCloseDelay(callback: () => void, ms = POPUP_CLOSE_DELAY_MS) {
+export function startCloseDelay(
+	callback: () => void,
+	ms = POPUP_CLOSE_DELAY_MS,
+) {
 	cancelCloseDelay();
 	closeTimer = setTimeout(callback, ms);
 }

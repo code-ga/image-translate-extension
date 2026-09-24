@@ -29,6 +29,8 @@ function originalResult(unit: TranslationUnit): TranslationResult {
 		sourceLanguage: unit.detectedLanguage,
 		cached: false,
 		bbox: unit.bbox,
+		boxReferences: unit.boxReferences,
+		boxIndexes: unit.boxIndexes,
 	};
 }
 
@@ -143,6 +145,8 @@ export async function scheduleTranslation(
 						sourceLanguage: unit.unit.detectedLanguage,
 						cached: false,
 						bbox: unit.unit.bbox,
+						boxReferences: unit.unit.boxReferences,
+						boxIndexes: unit.unit.boxIndexes,
 					});
 					await setInCache(
 						MODEL_VERSION,
@@ -176,6 +180,8 @@ export async function scheduleTranslation(
 					sourceLanguage: unit.unit.detectedLanguage,
 					cached: true,
 					bbox: unit.unit.bbox,
+					boxReferences: unit.unit.boxReferences,
+					boxIndexes: unit.unit.boxIndexes,
 				});
 			} else {
 				results.set(unit.unit.id, originalResult(unit.unit));

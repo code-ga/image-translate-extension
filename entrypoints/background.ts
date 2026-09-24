@@ -1,11 +1,10 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
-import { translationEngine, translateRegions } from "@/src/translation/engine";
-import type { TranslationResponse, TranslationUnit, NllbLanguageCode } from "@/src/translation/types";
 import type {
 	AppMessage,
-	OCRRegion,
+	OffscreenTranslateRegionsMessage,
+	OffscreenTranslateTextMessage,
 	ProcessOcrMessage,
 	TranslateRegionsMessage,
 	TranslateRegionsResponse,
@@ -17,18 +16,18 @@ import { getExtensionSettings } from "@/utils/extension-settings";
 
 export default defineBackground({
 	type: "module",
-	async main() {
-		browser.runtime.onStartup.addListener(async () => {
-			await ensureOffscreenRunning();
-			await translationEngine.warmup();
-			console.log("model init successful");
+	main() {
+		browser.runtime.onStartup.addListener(() => {
+			ensureOffscreenRunning().catch((error) => {
+				console.error("Failed to start the offscreen document", error);
+			});
 		});
 
-		browser.runtime.onInstalled.addListener(async () => {
+		browser.runtime.onInstalled.addListener(() => {
 			console.log("browser extension installed");
-			await ensureOffscreenRunning();
-			await translationEngine.warmup();
-			console.log("model init successful");
+			ensureOffscreenRunning().catch((error) => {
+				console.error("Failed to start the offscreen document", error);
+			});
 		});
 
 		browser.runtime.onInstalled.addListener(() => {
@@ -118,11 +117,13 @@ export default defineBackground({
 						sendResponse({ ok: true });
 						return true;
 					case "translate/text": {
-						handleTranslateText(msg, sendResponse);
+						if (msg.from !== "content" || msg.to !== "background") break;
+						void handleTranslateText(msg, sendResponse);
 						return true;
 					}
 					case "translate/regions": {
-						handleTranslateRegions(msg, sendResponse);
+						if (msg.from !== "content" || msg.to !== "background") break;
+						void handleTranslateRegions(msg, sendResponse);
 						return true;
 					}
 				}
@@ -148,7 +149,17 @@ function scheduleBatchFlush() {
 	}, OCR_BATCH_DEBOUNCE_MS);
 }
 
-async function ensureOffscreenRunning() {
+let offscreenStartPromise: Promise<void> | null = null;
+
+function ensureOffscreenRunning(): Promise<void> {
+	if (offscreenStartPromise) return offscreenStartPromise;
+	offscreenStartPromise = ensureOffscreenDocument().finally(() => {
+		offscreenStartPromise = null;
+	});
+	return offscreenStartPromise;
+}
+
+async function ensureOffscreenDocument() {
 	const contexts = await browser.runtime.getContexts({
 		contextTypes: ["OFFSCREEN_DOCUMENT"],
 	});
@@ -158,7 +169,7 @@ async function ensureOffscreenRunning() {
 			url: "offscreen.html",
 			reasons: ["WORKERS"],
 			justification:
-				"Maintains persistent memory cache for the PaddleOCR engine.",
+				"Hosts the PaddleOCR engine and the translation worker used by the extension.",
 		});
 	}
 }
@@ -189,6 +200,7 @@ async function flushOcrBatch() {
 			}),
 		);
 
+		await ensureOffscreenRunning();
 		const response = await new Promise<{
 			success: boolean;
 			results?: any[];
@@ -260,31 +272,15 @@ async function handleTranslateText(
 	sendResponse: (response: TranslateTextResponse) => void,
 ): Promise<void> {
 	try {
-		const { text, srcLang, targetLang } = msg;
-		const units: TranslationUnit[] = [
-			{
-				id: `text_${Date.now()}`,
-				sourceText: text,
-				bbox: { x: 0, y: 0, width: 0, height: 0 },
-				boxReferences: [],
-				detectedLanguage: (srcLang || "unknown") as TranslationUnit["detectedLanguage"],
-				detectionConfidence: srcLang ? 1 : 0,
-			},
-		];
-
-		const response = await translationEngine.translate({ units, targetLang: targetLang as NllbLanguageCode });
-
-		if (response.results.length > 0) {
-			sendResponse({
-				success: true,
-				translatedText: response.results[0].translatedText,
-			});
-		} else {
-			sendResponse({
-				success: false,
-				error: response.errors[0]?.message || "No translation result",
-			});
-		}
+		const response = await sendToOffscreen<TranslateTextResponse>({
+			from: "background",
+			to: "offscreen",
+			type: "offscreen/translate-text",
+			text: msg.text,
+			srcLang: msg.srcLang,
+			targetLang: msg.targetLang,
+		});
+		sendResponse(response);
 	} catch (error) {
 		sendResponse({
 			success: false,
@@ -298,18 +294,37 @@ async function handleTranslateRegions(
 	sendResponse: (response: TranslateRegionsResponse) => void,
 ): Promise<void> {
 	try {
-		const result = await translateRegions(msg.regions);
-		sendResponse({
-			success: true,
+		const response = await sendToOffscreen<TranslateRegionsResponse>({
+			from: "background",
+			to: "offscreen",
+			type: "offscreen/translate-regions",
 			regions: msg.regions,
-			errors: result.errors,
 		});
+		sendResponse(response);
 	} catch (error) {
 		sendResponse({
 			success: false,
 			error: error instanceof Error ? error.message : "Translation failed",
 		});
 	}
+}
+
+function sendToOffscreen<T>(
+	message: OffscreenTranslateTextMessage | OffscreenTranslateRegionsMessage,
+): Promise<T> {
+	return ensureOffscreenRunning().then(
+		() =>
+			new Promise<T>((resolve, reject) => {
+				browser.runtime.sendMessage(message, (response: T) => {
+					const lastError = browser.runtime.lastError;
+					if (lastError) {
+						reject(new Error(lastError.message));
+						return;
+					}
+					resolve(response);
+				});
+			}),
+	);
 }
 
 function arrayBufferToBase64Legacy(buffer: ArrayBuffer): string {

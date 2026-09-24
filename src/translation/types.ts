@@ -78,11 +78,17 @@ export type LanguageDetectionResult = {
 	candidates: LanguageCandidate[];
 };
 
+export type TranslationBoxIndex = {
+	regionIndex: number;
+	boxIndex: number;
+};
+
 export type TranslationUnit = {
 	id: string;
 	sourceText: string;
 	bbox: { x: number; y: number; width: number; height: number };
 	boxReferences: OCRBox[];
+	boxIndexes: TranslationBoxIndex[];
 	detectedLanguage: SupportedSourceLanguage | "unknown" | "vie";
 	detectionConfidence: number;
 };
@@ -103,6 +109,8 @@ export type TranslationResult = {
 	sourceLanguage: SupportedSourceLanguage | "unknown" | "vie";
 	cached: boolean;
 	bbox: TranslationUnit["bbox"];
+	boxReferences?: OCRBox[];
+	boxIndexes?: TranslationBoxIndex[];
 };
 
 export type TranslationErrorCode =

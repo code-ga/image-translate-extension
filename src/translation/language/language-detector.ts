@@ -1,5 +1,10 @@
 import { detectAll } from "tinyld";
-import type { LanguageCandidate, ScriptStats, ScriptType, SupportedSourceLanguage } from "../types";
+import type {
+	LanguageCandidate,
+	ScriptStats,
+	ScriptType,
+	SupportedSourceLanguage,
+} from "../types";
 import { isSupportedSourceLanguage } from "./language-map";
 import { identifyLanguageFromScript } from "./script-detector";
 

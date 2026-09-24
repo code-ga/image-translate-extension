@@ -1,11 +1,15 @@
-import type { LanguageDetectionResult, ScriptStats } from "../types";
+import type {
+	LanguageDetectionResult,
+	ScriptStats,
+	TranslationUnit,
+} from "../types";
 import { DETECTION_CONFIDENCE_THRESHOLD } from "../types";
 import { detectLanguageWithScript } from "./language-detector";
 import {
+	createEmptyScriptStats,
 	detectScript,
 	getDominantScript,
 	identifyLanguageFromScript,
-	createEmptyScriptStats,
 } from "./script-detector";
 
 const USELESS_PATTERNS = [
@@ -103,6 +107,24 @@ export async function resolveLanguage(
 		scriptStats,
 		candidates,
 	};
+}
+
+export async function detectLanguagesForUnits(
+	units: TranslationUnit[],
+): Promise<TranslationUnit[]> {
+	return Promise.all(
+		units.map(async (unit) => {
+			if (unit.detectedLanguage !== "unknown") return unit;
+			const detection = await resolveLanguage([
+				{ text: unit.sourceText, bbox: unit.bbox },
+			]);
+			return {
+				...unit,
+				detectedLanguage: detection.language,
+				detectionConfidence: detection.confidence,
+			};
+		}),
+	);
 }
 
 function createUnknownResult(
