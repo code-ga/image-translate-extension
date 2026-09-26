@@ -8,6 +8,7 @@ import type {
 	ModelProgress,
 	NllbLanguageCode,
 	TranslationError,
+	TranslationProvider,
 	TranslationRequest,
 	TranslationResponse,
 	TranslationResult,
@@ -21,6 +22,16 @@ type CachedUnit = {
 	protectedText: string;
 	tokens: TokenMap;
 };
+
+/**
+ * Cached translations are namespaced per provider so switching between the
+ * hosted API and the local model never serves one engine's output to the other.
+ */
+const API_CACHE_NAMESPACE = "google-translate-api-v1";
+
+function cacheNamespace(provider: TranslationProvider): string {
+	return provider === "api" ? API_CACHE_NAMESPACE : MODEL_VERSION;
+}
 
 function originalResult(unit: TranslationUnit): TranslationResult {
 	return {
@@ -46,6 +57,8 @@ export async function scheduleTranslation(
 	request: TranslationRequest,
 	onProgress?: (progress: ModelProgress) => void,
 ): Promise<TranslationResponse> {
+	const provider: TranslationProvider = request.provider ?? "local";
+	const cacheVersion = cacheNamespace(provider);
 	const results = new Map<string, TranslationResult>();
 	const errors: TranslationError[] = [];
 	const translatable: CachedUnit[] = [];
@@ -114,7 +127,7 @@ export async function scheduleTranslation(
 		for (let index = 0; index < units.length; index++) {
 			const unit = units[index];
 			const cached = await getFromCache(
-				MODEL_VERSION,
+				cacheVersion,
 				ENGINE_VERSION,
 				srcLang,
 				TARGET_LANGUAGE,
@@ -134,6 +147,8 @@ export async function scheduleTranslation(
 					uncached.map((unit) => unit.protectedText),
 					srcLang,
 					onProgress,
+					provider,
+					request.targetLang ?? TARGET_LANGUAGE,
 				);
 				for (let index = 0; index < uncached.length; index++) {
 					const unit = uncached[index];
@@ -149,7 +164,7 @@ export async function scheduleTranslation(
 						boxIndexes: unit.unit.boxIndexes,
 					});
 					await setInCache(
-						MODEL_VERSION,
+						cacheVersion,
 						ENGINE_VERSION,
 						srcLang,
 						TARGET_LANGUAGE,

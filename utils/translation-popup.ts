@@ -1,4 +1,3 @@
-import type { AppMessage, TranslateTextResponse } from "@/types";
 import { DEFAULT_TARGET_LANG } from "./languages";
 import {
 	injectPopupStyles,
@@ -8,6 +7,7 @@ import {
 	POPUP_FONT,
 	POPUP_Z_INDEX,
 } from "./popup-base";
+import { requestJob } from "./port-client";
 
 const POPUP_DEBOUNCE_MS = 300;
 const POPUP_CLOSE_DELAY_MS = 1000;
@@ -174,16 +174,13 @@ function requestTranslateText(
 ) {
 	setResult(resultEl, "Translating...", "info");
 
-	browser.runtime
-		.sendMessage<AppMessage>({
-			from: "content",
-			to: "background",
-			type: "translate/text",
-			srcLang: "",
-			targetLang,
-			text,
-		})
-		.then((response: TranslateTextResponse) => {
+	requestJob({
+		kind: "translate-text",
+		srcLang: "",
+		targetLang,
+		text,
+	})
+		.then((response) => {
 			if (popupEl !== currentPopup) return;
 			if (response.success) {
 				setResult(

@@ -1,3 +1,4 @@
+import type { TranslationProvider } from "@/src/translation/types";
 import type { DomainPattern } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { DEFAULT_TARGET_LANG } from "@/utils/languages";
@@ -6,12 +7,18 @@ export interface ExtensionSettings {
 	enabled: boolean;
 	enabledDomains: DomainPattern[];
 	targetLang: string;
+	/**
+	 * `api` sends text to the hosted translate endpoint (no model download, no
+	 * GPU memory); `local` runs the in-browser NLLB model.
+	 */
+	translationProvider: TranslationProvider;
 }
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
 	enabled: true,
 	enabledDomains: [],
 	targetLang: DEFAULT_TARGET_LANG,
+	translationProvider: "api",
 };
 
 export async function getExtensionSettings(): Promise<ExtensionSettings> {
@@ -29,6 +36,5 @@ export async function getExtensionSettings(): Promise<ExtensionSettings> {
 export async function isUrlAllowedInSettings(url: string): Promise<boolean> {
 	const settings = await getExtensionSettings();
 	if (!settings.enabled) return false;
-	const enabledDomains = settings.enabledDomains;
-	return isUrlAllowed(url, enabledDomains);
+	return isUrlAllowed(url, settings.enabledDomains);
 }

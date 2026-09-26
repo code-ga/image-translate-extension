@@ -1,13 +1,8 @@
 import ort from "onnxruntime-web";
 import { type PaddleOcrResult, PaddleOcrService } from "ppu-paddle-ocr/web";
-import type { OCRBox, OCRRegion } from "@/types";
+import { OCR_CONCURRENCY } from "@/config/ocr-config";
+import type { OCRBox, OCRRegion, OcrInputItem } from "@/types";
 import { groupOcrBoxesIntoRegions } from "./ocr-region-grouping";
-
-type BatchOcrItem = {
-	fetchingType: "url" | "base64";
-	imageData: string;
-	headers?: Record<string, string>;
-};
 
 ort.env.wasm.wasmPaths = browser.runtime.getURL("onnx/" as any);
 // ort.env.wasm.numThreads = 1;
@@ -47,13 +42,15 @@ export async function initOcrModel(): Promise<PaddleOcrService> {
 	ocrModelInstance = new PaddleOcrService({
 		debugging: {
 			debug: false,
-			verbose: true,
+			verbose: false,
 		},
 		session: {
-			executionProviders: ["gpu", "webgpu", "webgl", "wasm"],
-			enableCpuMemArena: false,
-			enableMemPattern: false,
-			graphOptimizationLevel: "disabled",
+			// Left unset on purpose: the SDK resolves ["webgpu", "wasm"] (or
+			// ["wasm"]) from an actual adapter probe, which is more reliable than
+			// the previous hand-written list that named the same EP twice.
+			enableCpuMemArena: true,
+			enableMemPattern: true,
+			graphOptimizationLevel: "all",
 		},
 	});
 	await ocrModelInstance.initialize();
@@ -65,71 +62,72 @@ export async function initOcrModel(): Promise<PaddleOcrService> {
 type RunBatchResultItem =
 	| { success: true; data: OCRRegion[] }
 	| { success: false; error: string };
-export async function runBatchOcr(
-	items: BatchOcrItem[],
-): Promise<RunBatchResultItem[]> {
-	if ("TextDetector" in window) {
-		console.log(window.TextDetector);
-	}
-	const model = await initOcrModel();
 
-	console.log(`Running batch OCR on ${items.length} images...`);
-	const results = await Promise.allSettled(
-		items.map(async (item) => {
-			try {
-				const buffer = base64ToArrayBuffer(item.imageData);
-				const ocrResult = await model.batchRecognize([buffer], {
-					settle: true,
-					strategy: "per-box",
-				});
-				const result = ocrResult[0];
-				if (result.status === "fulfilled") {
-					const rawBoxes: OCRBox[] = (
-						result.value as PaddleOcrResult
-					).lines.flatMap((value) =>
-						value.flatMap((a) => {
-							if (a.text.length === 0) return [];
-							const x = a.box.x;
-							const y = a.box.y;
-							const width = a.box.width;
-							const height = a.box.height;
-							return [
-								{
-									text: a.text,
-									box: { x, y, width, height },
-									polygon: [
-										{ x, y },
-										{ x: x + width, y },
-										{ x: x + width, y: y + height },
-										{ x, y: y + height },
-									],
-								},
-							];
-						}),
-					);
-					const regions = groupOcrBoxesIntoRegions(rawBoxes);
-					console.log(
-						`OCR completed. Found ${regions.length} regions.`,
-						regions,
-					);
-					return { success: true as const, data: regions };
-				} else {
-					return {
-						success: false as const,
-						error: `${new String(result.reason)}`,
-					};
-				}
-			} catch (error) {
-				return { success: false as const, error: String(error) };
-			}
-		}),
-	);
-
-	return results.map((result): RunBatchResultItem => {
-		if (result.status === "fulfilled") {
-			return result.value;
-		} else {
+async function recognizeImage(
+	model: PaddleOcrService,
+	item: OcrInputItem,
+): Promise<RunBatchResultItem> {
+	try {
+		const buffer = base64ToArrayBuffer(item.imageData);
+		const ocrResult = await model.batchRecognize([buffer], {
+			settle: true,
+			strategy: "per-box",
+		});
+		const result = ocrResult[0];
+		if (!result) {
+			return { success: false, error: "OCR returned no result" };
+		}
+		if (result.status !== "fulfilled") {
 			return { success: false, error: String(result.reason) };
 		}
-	});
+
+		const rawBoxes: OCRBox[] = (result.value as PaddleOcrResult).lines.flatMap(
+			(value) =>
+				value.flatMap((box) => {
+					if (box.text.length === 0) return [];
+					const x = box.box.x;
+					const y = box.box.y;
+					const width = box.box.width;
+					const height = box.box.height;
+					return [
+						{
+							text: box.text,
+							box: { x, y, width, height },
+							polygon: [
+								{ x, y },
+								{ x: x + width, y },
+								{ x: x + width, y: y + height },
+								{ x, y: y + height },
+							],
+						},
+					];
+				}),
+		);
+
+		return { success: true, data: groupOcrBoxesIntoRegions(rawBoxes) };
+	} catch (error) {
+		return { success: false, error: String(error) };
+	}
+}
+
+export async function runBatchOcr(
+	items: OcrInputItem[],
+): Promise<RunBatchResultItem[]> {
+	const model = await initOcrModel();
+	const results = new Array<RunBatchResultItem>(items.length);
+
+	// Bounded pool: the detection and recognition sessions are shared by every
+	// image, so only OCR_CONCURRENCY pipelines may be in flight at a time.
+	let nextIndex = 0;
+	const worker = async () => {
+		while (nextIndex < items.length) {
+			const index = nextIndex++;
+			results[index] = await recognizeImage(model, items[index]);
+		}
+	};
+
+	const workerCount = Math.max(1, Math.min(OCR_CONCURRENCY, items.length));
+	await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+	return results;
 }

@@ -93,9 +93,13 @@ export type TranslationUnit = {
 	detectionConfidence: number;
 };
 
+export type TranslationProvider = "api" | "local";
+
 export type TranslationRequest = {
 	units: TranslationUnit[];
 	targetLang?: NllbLanguageCode;
+	/** `api` uses the hosted translate endpoint, `local` loads the NLLB model. */
+	provider?: TranslationProvider;
 };
 
 export type TranslationResponse = {
@@ -119,6 +123,7 @@ export type TranslationErrorCode =
 	| "LANGUAGE_UNKNOWN"
 	| "LANGUAGE_UNSUPPORTED"
 	| "INFERENCE_FAILED"
+	| "API_REQUEST_FAILED"
 	| "CACHE_ERROR"
 	| "WORKER_ERROR"
 	| "TOKEN_PROTECTION_FAILED"
@@ -156,6 +161,10 @@ export type ModelProgress = {
 	file?: string;
 };
 
+export type TranslationWorkerControlPayload = {
+	provider?: TranslationProvider;
+};
+
 export type TranslationWorkerRequest =
 	| {
 			type: "translate";
@@ -164,7 +173,7 @@ export type TranslationWorkerRequest =
 	  }
 	| {
 			type: "warmup" | "dispose" | "status";
-			payload?: undefined;
+			payload?: TranslationWorkerControlPayload;
 			requestId: string;
 	  };
 

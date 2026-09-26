@@ -1,9 +1,11 @@
 import type { OCRRegion } from "@/types";
+import { getExtensionSettings } from "@/utils/extension-settings";
 import { detectLanguagesForUnits } from "./language/language-resolver";
 import { groupRegionsIntoTranslationUnits } from "./preprocess/grouping";
 import type {
 	ModelProgress,
 	ModelStatus,
+	TranslationProvider,
 	TranslationRequest,
 	TranslationResponse,
 	TranslationUnit,
@@ -23,6 +25,19 @@ type PendingRequest = {
 let worker: Worker | null = null;
 let requestIdCounter = 0;
 const pendingRequests = new Map<string, PendingRequest>();
+
+/**
+ * `api` translates through the hosted endpoint and never loads the local model;
+ * `local` keeps the in-browser NLLB pipeline. Read per request so switching the
+ * setting in the popup takes effect without reloading the extension.
+ */
+async function resolveProvider(): Promise<TranslationProvider> {
+	try {
+		return (await getExtensionSettings()).translationProvider;
+	} catch {
+		return "api";
+	}
+}
 
 function getWorker(): Worker | null {
 	if (worker) return worker;
@@ -142,10 +157,14 @@ export const translationEngine: TranslationEngine = {
 			);
 		}
 
+		const provider = await resolveProvider();
+
 		const updatedRequest: TranslationRequest = {
 			...request,
 			units: unitsWithLang,
-			targetLang: TARGET_LANGUAGE,
+			provider,
+			// The local model is hard-wired to Vietnamese; the API honours the request.
+			targetLang: provider === "api" ? request.targetLang : TARGET_LANGUAGE,
 		};
 
 		try {
@@ -175,8 +194,10 @@ export const translationEngine: TranslationEngine = {
 	},
 
 	async warmup() {
+		const provider = await resolveProvider();
 		const response = await requestWorker({
 			type: "warmup",
+			payload: { provider },
 			requestId: generateRequestId(),
 		});
 		if (response.type !== "status")

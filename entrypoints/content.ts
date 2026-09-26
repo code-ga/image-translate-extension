@@ -1,3 +1,4 @@
+import { MAX_OCR_IMAGES_PER_PAGE, OCR_MIN_SIDE_PX } from "@/config/ocr-config";
 import type {
 	AppMessage,
 	CanvasInfoWithStatus,
@@ -5,7 +6,6 @@ import type {
 	OCRRegion,
 	TranslateCompleteMessage,
 	TranslateProgressMessage,
-	TranslateRegionsMessage,
 } from "@/types";
 import { startLiveObserver, startUrlPolling } from "@/utils/dom-observer";
 import { createElementState } from "@/utils/element-state";
@@ -21,6 +21,7 @@ import {
 	removeOverlay,
 	updateElementOverlayPosition,
 } from "@/utils/overlay";
+import { requestJob } from "@/utils/port-client";
 import { showToast } from "@/utils/toast";
 import { setDefaultTargetLang } from "@/utils/translation-popup";
 
@@ -108,22 +109,17 @@ function renderCanvasOverlay(
 }
 
 async function translateAndUpdateOverlay(
-	element: HTMLImageElement | HTMLCanvasElement,
 	ocrRegions: OCRRegion[],
-	getOverlay: () => HTMLElement | undefined,
 	renderOverlay: (regions: OCRRegion[]) => void,
 ): Promise<void> {
 	try {
-		const response = await browser.runtime.sendMessage({
-			from: "content",
-			to: "background",
-			type: "translate/regions",
+		const response = await requestJob({
+			kind: "translate-regions",
 			regions: ocrRegions,
-		} satisfies TranslateRegionsMessage);
+		});
 
-		if (response?.success && response.regions) {
-			const translatedRegions = response.regions;
-			renderOverlay(translatedRegions);
+		if (response.success && response.regions) {
+			renderOverlay(response.regions);
 		}
 	} catch (error) {
 		console.error("Translation failed:", error);
@@ -142,25 +138,79 @@ function observeCanvasSize(canvas: HTMLCanvasElement) {
 	});
 }
 
+/**
+ * Work admission control. Running every image on a heavy page is what used to
+ * take the extension process down, so the N largest candidates start
+ * immediately and everything else waits in a tail queue that runs one element
+ * at a time, only while the page is otherwise idle.
+ */
+let inFlight = 0;
+const tailQueue: Array<() => void> = [];
+let tailQueued = false;
+
+function beginWork() {
+	inFlight++;
+}
+
+function endWork() {
+	inFlight = Math.max(0, inFlight - 1);
+	pumpTail();
+}
+
+function enqueueTail(start: () => void) {
+	tailQueued = true;
+	tailQueue.push(start);
+	pumpTail();
+}
+
+function pumpTail() {
+	if (!tailQueued) return;
+	// Keep pulling until something actually starts: a queued entry can be a
+	// no-op when the element is already being processed, and that must not
+	// stall the rest of the queue.
+	while (inFlight === 0) {
+		const next = tailQueue.shift();
+		if (!next) {
+			tailQueued = false;
+			return;
+		}
+		next();
+	}
+}
+
+function resetTail() {
+	tailQueued = false;
+	tailQueue.length = 0;
+}
+
+function queueImage(img: HTMLImageElement) {
+	if (imageState.processed.get(img) === (img.currentSrc || img.src)) return;
+	enqueueTail(() => processNewImage(img));
+}
+
+function queueCanvas(canvas: HTMLCanvasElement) {
+	if (canvasState.processed.get(canvas) === canvas.toDataURL()) return;
+	enqueueTail(() => processNewCanvas(canvas));
+}
+
 function processNewImage(img: HTMLImageElement) {
 	if (imageState.processingSet.has(img)) return;
 	imageState.clearError(img);
 	imageState.processingSet.add(img);
+	beginWork();
 	processImage(
 		img,
 		(ocrData) => {
 			renderImageOverlay(img, ocrData);
 			observeImageSrc(img);
 			// Trigger translation after OCR completes
-			translateAndUpdateOverlay(
-				img,
-				ocrData,
-				() => imageState.overlayMap.get(img),
-				(regions) => renderImageOverlay(img, regions),
+			translateAndUpdateOverlay(ocrData, (regions) =>
+				renderImageOverlay(img, regions),
 			);
 		},
 		() => {
 			imageState.processingSet.delete(img);
+			endWork();
 		},
 		(error) => {
 			const errorMsg = error instanceof Error ? error.message : error;
@@ -182,21 +232,20 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 	if (canvasState.processingSet.has(canvas)) return;
 	canvasState.clearError(canvas);
 	canvasState.processingSet.add(canvas);
+	beginWork();
 	processCanvas(
 		canvas,
 		(ocrData) => {
 			renderCanvasOverlay(canvas, ocrData);
 			observeCanvasSize(canvas);
 			// Trigger translation after OCR completes
-			translateAndUpdateOverlay(
-				canvas,
-				ocrData,
-				() => canvasState.overlayMap.get(canvas),
-				(regions) => renderCanvasOverlay(canvas, regions),
+			translateAndUpdateOverlay(ocrData, (regions) =>
+				renderCanvasOverlay(canvas, regions),
 			);
 		},
 		() => {
 			canvasState.processingSet.delete(canvas);
+			endWork();
 		},
 		(error) => {
 			const errorMsg = error instanceof Error ? error.message : error;
@@ -212,6 +261,56 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 				.catch(() => {});
 		},
 	);
+}
+
+type OcrCandidate =
+	| { kind: "image"; element: HTMLImageElement; area: number }
+	| { kind: "canvas"; element: HTMLCanvasElement; area: number };
+
+function collectOcrCandidates(): OcrCandidate[] {
+	const candidates: OcrCandidate[] = [];
+
+	for (const img of Array.from(document.images)) {
+		const width = img.naturalWidth || img.width || 0;
+		const height = img.naturalHeight || img.height || 0;
+		if (width < OCR_MIN_SIDE_PX || height < OCR_MIN_SIDE_PX) continue;
+		const style = getComputedStyle(img);
+		if (
+			style.display === "none" ||
+			style.visibility === "hidden" ||
+			style.opacity === "0"
+		)
+			continue;
+		candidates.push({ kind: "image", element: img, area: width * height });
+	}
+
+	const canvases = document.querySelectorAll("canvas");
+	for (let i = 0; i < canvases.length; i++) {
+		const canvas = canvases[i];
+		const width = canvas.width || 0;
+		const height = canvas.height || 0;
+		if (width < OCR_MIN_SIDE_PX || height < OCR_MIN_SIDE_PX) continue;
+		const style = getComputedStyle(canvas);
+		if (
+			style.display === "none" ||
+			style.visibility === "hidden" ||
+			style.opacity === "0"
+		)
+			continue;
+		candidates.push({ kind: "canvas", element: canvas, area: width * height });
+	}
+
+	// Largest first: those images carry the most text and cost the most to OCR,
+	// so they are the ones worth running first.
+	return candidates.sort((a, b) => b.area - a.area);
+}
+
+function startCandidate(candidate: OcrCandidate) {
+	if (candidate.kind === "image") {
+		processNewImage(candidate.element);
+	} else {
+		processNewCanvas(candidate.element);
+	}
 }
 
 async function syncSettingsTargetLang() {
@@ -248,39 +347,25 @@ async function autoTranslateIfAllowed() {
 		liveObserver.disconnect();
 	}
 
-	for (const img of Array.from(document.images)) {
-		const width = img.naturalWidth || img.width || 0;
-		const height = img.naturalHeight || img.height || 0;
-		if (width < 30 || height < 30) continue;
-		const style = getComputedStyle(img);
-		if (
-			style.display === "none" ||
-			style.visibility === "hidden" ||
-			style.opacity === "0"
-		)
-			continue;
-		processNewImage(img);
+	// Re-scanning rebuilds the plan from scratch: a page navigation or settings
+	// change should not keep the previous page's backlog around.
+	resetTail();
+
+	const candidates = collectOcrCandidates();
+	const priority = candidates.slice(0, MAX_OCR_IMAGES_PER_PAGE);
+	const deferred = candidates.slice(MAX_OCR_IMAGES_PER_PAGE);
+
+	for (const candidate of priority) {
+		startCandidate(candidate);
 	}
 
-	for (let i = 0; i < document.querySelectorAll("canvas").length; i++) {
-		const canvas = document.querySelectorAll("canvas")[i];
-		const width = canvas.width || 0;
-		const height = canvas.height || 0;
-		if (width < 30 || height < 30) continue;
-		const style = getComputedStyle(canvas);
-		if (
-			style.display === "none" ||
-			style.visibility === "hidden" ||
-			style.opacity === "0"
-		)
-			continue;
-		processNewCanvas(canvas);
+	for (const candidate of deferred) {
+		enqueueTail(() => startCandidate(candidate));
 	}
 
-	liveObserver = startLiveObserver(
-		(img) => processNewImage(img),
-		(canvas) => processNewCanvas(canvas),
-	);
+	// Dynamically added elements are never part of the initial plan, so they
+	// always go through the tail queue.
+	liveObserver = startLiveObserver(queueImage, queueCanvas);
 }
 
 function collectImageInfo(): ImageInfoWithStatus[] {
@@ -289,7 +374,7 @@ function collectImageInfo(): ImageInfoWithStatus[] {
 	for (const img of Array.from(document.images)) {
 		const width = img.naturalWidth || img.width || 0;
 		const height = img.naturalHeight || img.height || 0;
-		if (width < 30 || height < 30) continue;
+		if (width < OCR_MIN_SIDE_PX || height < OCR_MIN_SIDE_PX) continue;
 		const style = getComputedStyle(img);
 		if (
 			style.display === "none" ||
@@ -519,7 +604,7 @@ function collectCanvasInfo(): CanvasInfoWithStatus[] {
 		const canvas = document.querySelectorAll("canvas")[i];
 		const width = canvas.width || 0;
 		const height = canvas.height || 0;
-		if (width < 30 || height < 30) continue;
+		if (width < OCR_MIN_SIDE_PX || height < OCR_MIN_SIDE_PX) continue;
 		const style = getComputedStyle(canvas);
 		if (
 			style.display === "none" ||

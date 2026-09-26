@@ -16,6 +16,13 @@ export type OCRRegion = {
 
 export type OCRResult = OCRBox[];
 
+/** One image handed to the OCR engine. `imageData` is base64 for `base64` and a URL for `url`. */
+export type OcrInputItem = {
+	fetchingType: "url" | "base64";
+	imageData: string;
+	headers?: Record<string, string>;
+};
+
 export type CanvasInfo = {
 	index: number;
 	width: number;

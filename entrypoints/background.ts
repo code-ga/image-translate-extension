@@ -1,18 +1,22 @@
 declare const self: ServiceWorkerGlobalScope;
 
-import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
-import type {
-	AppMessage,
-	OffscreenTranslateRegionsMessage,
-	OffscreenTranslateTextMessage,
-	ProcessOcrMessage,
-	TranslateRegionsMessage,
-	TranslateRegionsResponse,
-	TranslateTextMessage,
-	TranslateTextResponse,
-} from "@/types";
+import {
+	CONTENT_PORT_NAME,
+	type ExtensionPort,
+	type JobPayload,
+	type JobResponse,
+	OFFSCREEN_PORT_NAME,
+	type PortControlMessage,
+	type QueueRequest,
+	type QueueResult,
+} from "@/src/queue/types";
+import type { AppMessage } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { getExtensionSettings } from "@/utils/extension-settings";
+
+const OFFSCREEN_READY_TIMEOUT_MS = 2000;
+const OFFSCREEN_CONNECT_ATTEMPTS = 5;
+const OFFSCREEN_RECONNECT_DELAY_MS = 150;
 
 export default defineBackground({
 	type: "module",
@@ -64,13 +68,17 @@ export default defineBackground({
 			console.log("Extension icon clicked", tab);
 		});
 
+		// Long-lived port traffic (OCR + translation) replaces the async
+		// sendMessage handshake that used to break when the worker was evicted.
+		browser.runtime.onConnect.addListener((port) => {
+			if (port.name !== CONTENT_PORT_NAME) return;
+			handleContentPort(port);
+		});
+
+		// Lightweight, non-queued traffic keeps using one-shot messages.
 		browser.runtime.onMessage.addListener(
 			(msg: AppMessage, _sender, sendResponse) => {
 				switch (msg.type) {
-					case "ocr/process":
-						ocrBatchQueue.push({ msg, sendResponse });
-						scheduleBatchFlush();
-						return true;
 					case "settings/get":
 						getExtensionSettings().then((settings) => {
 							sendResponse(settings);
@@ -108,45 +116,176 @@ export default defineBackground({
 								}
 							}
 						});
-						browser.runtime.sendMessage({
-							from: "background",
-							to: "all",
-							type: "extension/error",
-							error: msg.error,
-						});
+						browser.runtime
+							.sendMessage({
+								from: "background",
+								to: "all",
+								type: "extension/error",
+								error: msg.error,
+							})
+							.catch(() => {});
 						sendResponse({ ok: true });
 						return true;
-					case "translate/text": {
-						if (msg.from !== "content" || msg.to !== "background") break;
-						void handleTranslateText(msg, sendResponse);
-						return true;
-					}
-					case "translate/regions": {
-						if (msg.from !== "content" || msg.to !== "background") break;
-						void handleTranslateRegions(msg, sendResponse);
-						return true;
-					}
 				}
 			},
 		);
 	},
 });
 
-interface OcrBatchItem {
-	msg: ProcessOcrMessage;
-	sendResponse: (response: any) => void;
+/** jobId -> content port that is waiting for the result. */
+const jobRoutes = new Map<string, ExtensionPort>();
+
+let offscreenPort: ExtensionPort | null = null;
+let offscreenConnecting: Promise<ExtensionPort> | null = null;
+let routeCounter = 0;
+
+function handleContentPort(port: ExtensionPort): void {
+	port.onMessage.addListener((message: QueueRequest) => {
+		if (message?.type !== "queue/enqueue") return;
+
+		routeCounter += 1;
+		const jobId = message.jobId || `job_${routeCounter}_${Date.now()}`;
+		jobRoutes.set(jobId, port);
+		void forwardToOffscreen(port, jobId, message.payload);
+	});
+
+	port.onDisconnect.addListener(() => {
+		for (const [jobId, target] of jobRoutes) {
+			if (target === port) jobRoutes.delete(jobId);
+		}
+	});
 }
 
-const ocrBatchQueue: OcrBatchItem[] = [];
-let batchTimer: ReturnType<typeof setTimeout> | null = null;
-let activeBatchCount = 0;
+async function forwardToOffscreen(
+	contentPort: ExtensionPort,
+	jobId: string,
+	payload: JobPayload,
+): Promise<void> {
+	try {
+		const target = await getOffscreenPort();
+		target.postMessage({ type: "queue/enqueue", jobId, payload });
+	} catch (error) {
+		jobRoutes.delete(jobId);
+		postToContent(contentPort, jobId, {
+			success: false,
+			error:
+				error instanceof Error ? error.message : "Failed to reach the queue",
+		});
+	}
+}
 
-function scheduleBatchFlush() {
-	if (batchTimer !== null) return;
-	batchTimer = setTimeout(() => {
-		batchTimer = null;
-		flushOcrBatch();
-	}, OCR_BATCH_DEBOUNCE_MS);
+function postToContent(
+	port: ExtensionPort,
+	jobId: string,
+	response: JobResponse,
+): void {
+	try {
+		port.postMessage({ type: "queue/result", jobId, response });
+	} catch {
+		// The requesting tab is gone; nothing to deliver the result to.
+	}
+}
+
+function getOffscreenPort(): Promise<ExtensionPort> {
+	if (offscreenPort) return Promise.resolve(offscreenPort);
+	if (offscreenConnecting) return offscreenConnecting;
+
+	offscreenConnecting = connectOffscreen().finally(() => {
+		offscreenConnecting = null;
+	});
+	return offscreenConnecting;
+}
+
+async function connectOffscreen(): Promise<ExtensionPort> {
+	await ensureOffscreenRunning();
+
+	let lastError: Error | null = null;
+	for (let attempt = 0; attempt < OFFSCREEN_CONNECT_ATTEMPTS; attempt++) {
+		let port: ExtensionPort;
+		try {
+			port = browser.runtime.connect({ name: OFFSCREEN_PORT_NAME });
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			await delay(OFFSCREEN_RECONNECT_DELAY_MS);
+			continue;
+		}
+
+		if (await waitForOffscreenReady(port)) {
+			attachOffscreenPort(port);
+			offscreenPort = port;
+			return port;
+		}
+
+		try {
+			port.disconnect();
+		} catch {
+			// already gone
+		}
+		lastError = new Error("The offscreen document did not become ready");
+		await delay(OFFSCREEN_RECONNECT_DELAY_MS);
+	}
+
+	throw lastError ?? new Error("Could not connect to the offscreen document");
+}
+
+function waitForOffscreenReady(port: ExtensionPort): Promise<boolean> {
+	return new Promise((resolve) => {
+		let settled = false;
+
+		const finish = (ready: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearInterval(pingTimer);
+			clearTimeout(timer);
+			port.onMessage.removeListener(onMessage);
+			port.onDisconnect.removeListener(onDisconnect);
+			resolve(ready);
+		};
+
+		const onMessage = (message: PortControlMessage) => {
+			if (message?.type === "queue/ready") finish(true);
+		};
+
+		const onDisconnect = () => finish(false);
+
+		const ping = () => {
+			try {
+				port.postMessage({ type: "queue/ping" });
+			} catch {
+				finish(false);
+			}
+		};
+
+		const pingTimer = setInterval(ping, 300);
+		const timer = setTimeout(() => finish(false), OFFSCREEN_READY_TIMEOUT_MS);
+
+		port.onMessage.addListener(onMessage);
+		port.onDisconnect.addListener(onDisconnect);
+		ping();
+	});
+}
+
+function attachOffscreenPort(port: ExtensionPort): void {
+	port.onMessage.addListener((message: QueueResult) => {
+		if (message?.type !== "queue/result") return;
+		const target = jobRoutes.get(message.jobId);
+		if (!target) return;
+		jobRoutes.delete(message.jobId);
+		postToContent(target, message.jobId, message.response);
+	});
+
+	port.onDisconnect.addListener(() => {
+		if (offscreenPort !== port) return;
+		offscreenPort = null;
+		failPendingRoutes("The offscreen document closed before the job finished");
+	});
+}
+
+function failPendingRoutes(reason: string): void {
+	for (const [jobId, target] of jobRoutes) {
+		postToContent(target, jobId, { success: false, error: reason });
+	}
+	jobRoutes.clear();
 }
 
 let offscreenStartPromise: Promise<void> | null = null;
@@ -169,186 +308,11 @@ async function ensureOffscreenDocument() {
 			url: "offscreen.html",
 			reasons: ["WORKERS"],
 			justification:
-				"Hosts the PaddleOCR engine and the translation worker used by the extension.",
+				"Hosts the priority queue, the PaddleOCR engine and the translation worker used by the extension.",
 		});
 	}
 }
 
-async function flushOcrBatch() {
-	if (ocrBatchQueue.length === 0 || activeBatchCount > 0) return;
-
-	const batch = ocrBatchQueue.splice(
-		0,
-		Math.min(ocrBatchQueue.length, OCR_BATCH_SIZE),
-	);
-	activeBatchCount++;
-
-	try {
-		const resolvedItems = await Promise.all(
-			batch.map(async (item) => {
-				if (item.msg.fetchingType === "url" && item.msg.headers) {
-					const base64 = await fetchImageAsBase64(
-						item.msg.imageData,
-						item.msg.headers,
-					);
-					return { fetchingType: "base64" as const, imageData: base64 };
-				}
-				return {
-					fetchingType: item.msg.fetchingType,
-					imageData: item.msg.imageData,
-				};
-			}),
-		);
-
-		await ensureOffscreenRunning();
-		const response = await new Promise<{
-			success: boolean;
-			results?: any[];
-			error?: string;
-		}>((resolve) => {
-			browser.runtime.sendMessage(
-				{
-					from: "background",
-					to: "offscreen",
-					type: "offscreen/batch-run-ocr",
-					items: resolvedItems,
-				},
-				(msgResponse) => {
-					if (browser.runtime.lastError) {
-						resolve({
-							success: false,
-							error: browser.runtime.lastError.message,
-						});
-						return;
-					}
-					resolve(
-						msgResponse as {
-							success: boolean;
-							results?: any[];
-							error?: string;
-						},
-					);
-				},
-			);
-		});
-
-		if (response?.success && Array.isArray(response.results)) {
-			const results = response.results;
-			batch.forEach((item, index) => {
-				const result = results[index];
-				if (result?.success) {
-					item.sendResponse({ success: true, ocrData: result.data });
-				} else {
-					item.sendResponse({
-						success: false,
-						error: result?.error || "Unknown batch item error",
-					});
-				}
-			});
-		} else {
-			batch.forEach((item) => {
-				item.sendResponse({
-					success: false,
-					error: response?.error || "Batch processing failed",
-				});
-			});
-		}
-	} catch (error) {
-		batch.forEach((item) => {
-			item.sendResponse({
-				success: false,
-				error:
-					error instanceof Error ? error.message : "Batch processing failed",
-			});
-		});
-	} finally {
-		activeBatchCount--;
-		scheduleBatchFlush();
-	}
-}
-
-async function handleTranslateText(
-	msg: TranslateTextMessage,
-	sendResponse: (response: TranslateTextResponse) => void,
-): Promise<void> {
-	try {
-		const response = await sendToOffscreen<TranslateTextResponse>({
-			from: "background",
-			to: "offscreen",
-			type: "offscreen/translate-text",
-			text: msg.text,
-			srcLang: msg.srcLang,
-			targetLang: msg.targetLang,
-		});
-		sendResponse(response);
-	} catch (error) {
-		sendResponse({
-			success: false,
-			error: error instanceof Error ? error.message : "Translation failed",
-		});
-	}
-}
-
-async function handleTranslateRegions(
-	msg: TranslateRegionsMessage,
-	sendResponse: (response: TranslateRegionsResponse) => void,
-): Promise<void> {
-	try {
-		const response = await sendToOffscreen<TranslateRegionsResponse>({
-			from: "background",
-			to: "offscreen",
-			type: "offscreen/translate-regions",
-			regions: msg.regions,
-		});
-		sendResponse(response);
-	} catch (error) {
-		sendResponse({
-			success: false,
-			error: error instanceof Error ? error.message : "Translation failed",
-		});
-	}
-}
-
-function sendToOffscreen<T>(
-	message: OffscreenTranslateTextMessage | OffscreenTranslateRegionsMessage,
-): Promise<T> {
-	return ensureOffscreenRunning().then(
-		() =>
-			new Promise<T>((resolve, reject) => {
-				browser.runtime.sendMessage(message, (response: T) => {
-					const lastError = browser.runtime.lastError;
-					if (lastError) {
-						reject(new Error(lastError.message));
-						return;
-					}
-					resolve(response);
-				});
-			}),
-	);
-}
-
-function arrayBufferToBase64Legacy(buffer: ArrayBuffer): string {
-	let binary = "";
-	const bytes = new Uint8Array(buffer);
-	const len = bytes.byteLength;
-
-	for (let i = 0; i < len; i++) {
-		binary += String.fromCharCode(bytes[i]);
-	}
-	return btoa(binary);
-}
-
-async function fetchImageAsBase64(
-	url: string,
-	headers?: Record<string, string>,
-): Promise<string> {
-	const headersInit = headers ? new Headers() : undefined;
-	if (headers) {
-		for (const [key, value] of Object.entries(headers)) {
-			headersInit?.append(key, value);
-		}
-	}
-	const response = await fetch(url, { headers: headersInit });
-	const arrayBuffer = await response.arrayBuffer();
-	return arrayBufferToBase64Legacy(arrayBuffer);
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
