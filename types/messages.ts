@@ -1,14 +1,40 @@
+import type { OCRRegion } from "./index";
+import type { TranslationError } from "@/src/translation/types";
+
 export type MessageRoute = {
 	from: "content" | "background" | "offscreen";
 	to: "background" | "content" | "offscreen" | "all";
 };
 
-export type Message<
-	T extends string,
-	P extends object = Record<string, never>,
-> = MessageRoute & {
-	type: T;
-} & P;
+export type Message<T extends string, P extends object = {}> =
+	MessageRoute & {
+		type: T;
+	} & P;
+
+export type ProcessOcrMessage = Message<
+	"ocr/process",
+	{
+		fetchingType: "url" | "base64";
+		imageData: string;
+		headers?: Record<string, string>;
+	}
+>;
+
+export type BatchRunOcrMessage = Message<
+	"offscreen/batch-run-ocr",
+	{
+		items: {
+			fetchingType: "url" | "base64";
+			imageData: string;
+		}[];
+	}
+>;
+
+export type BatchRunOcrResponse = {
+	success: boolean;
+	results?: any[];
+	error?: string;
+};
 
 export type GetSettingsMessage = Message<"settings/get">;
 
@@ -17,11 +43,8 @@ export type NotifySettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains:
-				| string
-				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
-			translationProvider: "api" | "local";
 		};
 	}
 >;
@@ -31,11 +54,8 @@ export type SettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains:
-				| string
-				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
-			translationProvider: "api" | "local";
 		};
 	}
 >;
@@ -119,6 +139,35 @@ export type ContextMenuTranslateMessage = Message<
 	}
 >;
 
+export type TranslateTextMessage = Message<
+	"translate/text",
+	{
+		text: string;
+		srcLang: string;
+		targetLang: string;
+	}
+>;
+
+export type TranslateTextResponse = {
+	success: boolean;
+	translatedText?: string;
+	error?: string;
+};
+
+export type TranslateRegionsMessage = Message<
+	"translate/regions",
+	{
+		regions: OCRRegion[];
+	}
+>;
+
+export type TranslateRegionsResponse = {
+	success: boolean;
+	regions?: OCRRegion[];
+	errors?: TranslationError[];
+	error?: string;
+};
+
 export type ExtensionErrorMessage = Message<
 	"extension/error",
 	{
@@ -127,6 +176,8 @@ export type ExtensionErrorMessage = Message<
 >;
 
 export type AppMessage =
+	| ProcessOcrMessage
+	| BatchRunOcrMessage
 	| GetSettingsMessage
 	| NotifySettingsChangedMessage
 	| SettingsChangedMessage
@@ -136,6 +187,8 @@ export type AppMessage =
 	| GetCanvasStatusMessage
 	| TranslateImagesCommand
 	| TranslateCanvasesCommand
+	| TranslateTextMessage
+	| TranslateRegionsMessage
 	| TranslateProgressMessage
 	| TranslateCompleteMessage
 	| ContextMenuTranslateMessage

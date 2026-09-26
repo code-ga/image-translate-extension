@@ -25,9 +25,18 @@ function sendResponse(
 }
 
 async function handleTranslate(
-	request: Extract<TranslationWorkerRequest, { type: "translate" }>,
+	request: TranslationWorkerRequest,
 ): Promise<void> {
 	const { payload, requestId } = request;
+
+	if (!payload) {
+		sendResponse(
+			"error",
+			{ code: "WORKER_ERROR", message: "Missing payload", recoverable: false },
+			requestId,
+		);
+		return;
+	}
 
 	try {
 		sendResponse(
@@ -53,11 +62,9 @@ async function handleTranslate(
 }
 
 async function handleWarmup(request: TranslationWorkerRequest): Promise<void> {
-	const provider = request.payload?.provider ?? "local";
 	try {
-		await loadModel(
-			(progress) => sendResponse("progress", progress, request.requestId),
-			provider,
+		await loadModel((progress) =>
+			sendResponse("progress", progress, request.requestId),
 		);
 		sendResponse("status", getModelStatus(), request.requestId);
 	} catch (error) {
@@ -98,24 +105,17 @@ export function startTranslationWorker(): void {
 			case WORKER_API.dispose:
 				await handleDispose(request);
 				break;
-			case WORKER_API.status:
-				sendResponse("status", getModelStatus(), request.requestId);
-				break;
-			default: {
-				// Unreachable for well-formed requests; kept for runtime safety.
-				const unknownRequest = request as TranslationWorkerRequest;
+			default:
 				sendResponse(
 					"error",
 					{
 						code: "WORKER_ERROR",
-						message: `Unknown message type: ${unknownRequest.type}`,
+						message: `Unknown message type: ${(request as TranslationWorkerRequest).type}`,
 						recoverable: false,
 					},
-					unknownRequest.requestId,
+					request.requestId,
 				);
-			}
 		}
 	};
 }
 
-startTranslationWorker();

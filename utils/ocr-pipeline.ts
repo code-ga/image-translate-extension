@@ -1,6 +1,5 @@
 import ResizeObserverPolyfill from "resize-observer-polyfill";
-import type { OCRRegion } from "@/types";
-import { requestJob } from "./port-client";
+import type { OCRRegion, ProcessOcrMessage } from "@/types";
 
 if (typeof window !== "undefined" && !window.ResizeObserver) {
 	window.ResizeObserver = ResizeObserverPolyfill;
@@ -99,16 +98,18 @@ async function sendOcrWithBase64(
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onError: (error: string | Error) => void,
 ) {
-	const response = await requestJob({
-		kind: "ocr",
+	const bgResponse = await browser.runtime.sendMessage({
+		from: "content",
+		to: "background",
+		type: "ocr/process",
 		fetchingType: "base64",
 		imageData: base64,
-	});
+	} satisfies ProcessOcrMessage);
 
-	if (response.success && response.ocrData) {
-		onSuccess(response.ocrData);
+	if (bgResponse?.success && bgResponse.ocrData) {
+		onSuccess(bgResponse.ocrData);
 	} else {
-		onError(response.error ?? "OCR processing failed");
+		onError(bgResponse?.error ?? "OCR processing failed");
 	}
 }
 
@@ -118,17 +119,19 @@ async function sendOcrWithUrl(
 	onSuccess: (ocrRegions: OCRRegion[]) => void,
 	onError: (error: string | Error) => void,
 ) {
-	const response = await requestJob({
-		kind: "ocr",
+	const bgResponse = await browser.runtime.sendMessage({
+		from: "content",
+		to: "background",
+		type: "ocr/process",
 		fetchingType: "url",
 		imageData: imageUrl,
 		headers,
-	});
+	} satisfies ProcessOcrMessage);
 
-	if (response.success && response.ocrData) {
-		onSuccess(response.ocrData);
+	if (bgResponse?.success && bgResponse.ocrData) {
+		onSuccess(bgResponse.ocrData);
 	} else {
-		onError(response.error ?? "OCR processing failed");
+		onError(bgResponse?.error ?? "OCR processing failed");
 	}
 }
 
@@ -190,20 +193,24 @@ async function processCanvas(
 ) {
 	try {
 		const base64 = canvas.toDataURL("image/png");
-		const response = await requestJob({
-			kind: "ocr",
+		const bgResponse = await browser.runtime.sendMessage({
+			from: "content",
+			to: "background",
+			type: "ocr/process",
 			fetchingType: "base64",
 			imageData: base64,
-		});
+		} satisfies ProcessOcrMessage);
 
-		if (response.success && response.ocrData) {
-			onSuccess(response.ocrData);
+		if (bgResponse?.success && bgResponse.ocrData) {
+			onSuccess(bgResponse.ocrData);
 		} else {
-			onError(response.error ?? "OCR processing failed");
+			onError(bgResponse?.error ?? "OCR processing failed");
 		}
 	} catch (error) {
 		console.error("Failed to translate canvas:", error);
-		onError(error instanceof Error ? error : "Failed to translate canvas");
+		onError(
+			error instanceof Error ? error : "Failed to translate canvas",
+		);
 	} finally {
 		onComplete();
 	}

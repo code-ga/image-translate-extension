@@ -78,28 +78,18 @@ export type LanguageDetectionResult = {
 	candidates: LanguageCandidate[];
 };
 
-export type TranslationBoxIndex = {
-	regionIndex: number;
-	boxIndex: number;
-};
-
 export type TranslationUnit = {
 	id: string;
 	sourceText: string;
 	bbox: { x: number; y: number; width: number; height: number };
 	boxReferences: OCRBox[];
-	boxIndexes: TranslationBoxIndex[];
 	detectedLanguage: SupportedSourceLanguage | "unknown" | "vie";
 	detectionConfidence: number;
 };
 
-export type TranslationProvider = "api" | "local";
-
 export type TranslationRequest = {
 	units: TranslationUnit[];
 	targetLang?: NllbLanguageCode;
-	/** `api` uses the hosted translate endpoint, `local` loads the NLLB model. */
-	provider?: TranslationProvider;
 };
 
 export type TranslationResponse = {
@@ -113,8 +103,6 @@ export type TranslationResult = {
 	sourceLanguage: SupportedSourceLanguage | "unknown" | "vie";
 	cached: boolean;
 	bbox: TranslationUnit["bbox"];
-	boxReferences?: OCRBox[];
-	boxIndexes?: TranslationBoxIndex[];
 };
 
 export type TranslationErrorCode =
@@ -123,7 +111,6 @@ export type TranslationErrorCode =
 	| "LANGUAGE_UNKNOWN"
 	| "LANGUAGE_UNSUPPORTED"
 	| "INFERENCE_FAILED"
-	| "API_REQUEST_FAILED"
 	| "CACHE_ERROR"
 	| "WORKER_ERROR"
 	| "TOKEN_PROTECTION_FAILED"
@@ -161,10 +148,6 @@ export type ModelProgress = {
 	file?: string;
 };
 
-export type TranslationWorkerControlPayload = {
-	provider?: TranslationProvider;
-};
-
 export type TranslationWorkerRequest =
 	| {
 			type: "translate";
@@ -173,7 +156,7 @@ export type TranslationWorkerRequest =
 	  }
 	| {
 			type: "warmup" | "dispose" | "status";
-			payload?: TranslationWorkerControlPayload;
+			payload?: undefined;
 			requestId: string;
 	  };
 

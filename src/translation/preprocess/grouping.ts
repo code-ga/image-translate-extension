@@ -166,10 +166,6 @@ export function groupRegionsIntoTranslationUnits(
 				sourceText: chunk,
 				bbox: computeBounds(boxes),
 				boxReferences: boxes,
-				boxIndexes: chunkReferences.map((reference) => ({
-					regionIndex: reference.regionIndex,
-					boxIndex: reference.boxIndex,
-				})),
 				detectedLanguage: "unknown",
 				detectionConfidence: 0,
 			});

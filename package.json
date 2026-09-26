@@ -1,8 +1,8 @@
 {
-	"name": "image-translate",
-	"description": "Translate text inside images on any web page automatically.",
+	"name": "wxt-react-starter",
+	"description": "manifest.json description",
 	"private": true,
-	"version": "0.1.0",
+	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
 		"dev": "wxt",

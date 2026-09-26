@@ -1,6 +1,5 @@
 import "./App.css";
 import { useCallback, useEffect, useState } from "react";
-import type { TranslationProvider } from "@/src/translation/types";
 import type { DomainPattern } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { SUPPORTED_LANGUAGES } from "@/utils/languages";
@@ -35,8 +34,6 @@ function App() {
 	);
 	const [currentDomain, setCurrentDomain] = useState<string>("");
 	const [targetLang, setTargetLang] = useState("vi");
-	const [translationProvider, setTranslationProvider] =
-		useState<TranslationProvider>("api");
 	const [imageCount, setImageCount] = useState(0);
 	const [canvasCount, setCanvasCount] = useState(0);
 	const [imageProcessingCount, setImageProcessingCount] = useState(0);
@@ -57,7 +54,6 @@ function App() {
 		setEnabledDomains(settings.enabledDomains || []);
 		setGlobalEnabled(settings.enabled ?? true);
 		setTargetLang(settings.targetLang || "vi");
-		setTranslationProvider(settings.translationProvider || "api");
 	}, []);
 
 	const saveSettings = useCallback(
@@ -65,7 +61,6 @@ function App() {
 			enabledDomains?: DomainPattern[];
 			enabled?: boolean;
 			targetLang?: string;
-			translationProvider?: TranslationProvider;
 		}) => {
 			const current = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
 				string,
@@ -76,7 +71,6 @@ function App() {
 					enabledDomains: [],
 					enabled: true,
 					targetLang: "vi",
-					translationProvider: "api",
 				}),
 				...updates,
 			};
@@ -84,7 +78,6 @@ function App() {
 			setEnabledDomains(settings.enabledDomains || []);
 			setGlobalEnabled(settings.enabled ?? true);
 			setTargetLang(settings.targetLang || "vi");
-			setTranslationProvider(settings.translationProvider || "api");
 
 			browser.runtime
 				.sendMessage({
@@ -93,7 +86,6 @@ function App() {
 						enabled: settings.enabled ?? true,
 						enabledDomains: settings.enabledDomains || [],
 						targetLang: settings.targetLang || "vi",
-						translationProvider: settings.translationProvider || "api",
 					},
 				})
 				.catch(() => {});
@@ -256,14 +248,6 @@ function App() {
 		const lang = e.target.value;
 		setTargetLang(lang);
 		await saveSettings({ targetLang: lang });
-	};
-
-	const changeTranslationProvider = async (
-		e: React.ChangeEvent<HTMLSelectElement>,
-	) => {
-		const provider = e.target.value as TranslationProvider;
-		setTranslationProvider(provider);
-		await saveSettings({ translationProvider: provider });
 	};
 
 	const getStatusLabel = (status: string) => {
@@ -441,27 +425,6 @@ function App() {
 									{lang.label}
 								</option>
 							))}
-						</select>
-					</div>
-
-					<div className="divider" />
-
-					<div className="setting-item">
-						<div className="setting-label">
-							<span className="setting-title">Translation Engine</span>
-							<span className="setting-desc">
-								{translationProvider === "api"
-									? "Hosted translate API — light, no model download"
-									: "On-device NLLB model — slow to load, heavy on the GPU"}
-							</span>
-						</div>
-						<select
-							className="lang-select"
-							value={translationProvider}
-							onChange={changeTranslationProvider}
-						>
-							<option value="api">Hosted API</option>
-							<option value="local">On-device model</option>
 						</select>
 					</div>
 

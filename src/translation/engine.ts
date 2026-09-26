@@ -1,11 +1,9 @@
 import type { OCRRegion } from "@/types";
-import { getExtensionSettings } from "@/utils/extension-settings";
-import { detectLanguagesForUnits } from "./language/language-resolver";
+import { resolveLanguage } from "./language/language-resolver";
 import { groupRegionsIntoTranslationUnits } from "./preprocess/grouping";
 import type {
 	ModelProgress,
 	ModelStatus,
-	TranslationProvider,
 	TranslationRequest,
 	TranslationResponse,
 	TranslationUnit,
@@ -13,7 +11,6 @@ import type {
 	TranslationWorkerResponse,
 } from "./types";
 import { MAX_TRANSLATION_CHARS, TARGET_LANGUAGE } from "./types";
-import TranslationWorker from "./worker?worker";
 
 type PendingRequest = {
 	resolve: (response: TranslationWorkerResponse) => void;
@@ -26,23 +23,18 @@ let worker: Worker | null = null;
 let requestIdCounter = 0;
 const pendingRequests = new Map<string, PendingRequest>();
 
-/**
- * `api` translates through the hosted endpoint and never loads the local model;
- * `local` keeps the in-browser NLLB pipeline. Read per request so switching the
- * setting in the popup takes effect without reloading the extension.
- */
-async function resolveProvider(): Promise<TranslationProvider> {
-	try {
-		return (await getExtensionSettings()).translationProvider;
-	} catch {
-		return "api";
-	}
-}
-
 function getWorker(): Worker | null {
 	if (worker) return worker;
+	if (typeof Worker === "undefined") return null;
 
-	worker = new TranslationWorker({ name: "image-translate-model" });
+	try {
+		worker = new Worker(new URL("./worker.ts", import.meta.url), {
+			type: "module",
+		});
+	} catch {
+		worker = null;
+		return null;
+	}
 
 	worker.onmessage = (event: MessageEvent<TranslationWorkerResponse>) => {
 		const data = event.data;
@@ -121,6 +113,23 @@ export interface TranslationEngine {
 	getStatus(): Promise<ModelStatus>;
 }
 
+async function detectLanguagesForUnits(
+	units: TranslationUnit[],
+): Promise<TranslationUnit[]> {
+	return Promise.all(
+		units.map(async (unit) => {
+			const detection = await resolveLanguage([
+				{ text: unit.sourceText, bbox: unit.bbox },
+			]);
+			return {
+				...unit,
+				detectedLanguage: detection.language,
+				detectionConfidence: detection.confidence,
+			};
+		}),
+	);
+}
+
 function workerUnavailableResponse(
 	request: TranslationRequest,
 	message: string,
@@ -132,8 +141,6 @@ function workerUnavailableResponse(
 			sourceLanguage: unit.detectedLanguage,
 			cached: false,
 			bbox: unit.bbox,
-			boxReferences: unit.boxReferences,
-			boxIndexes: unit.boxIndexes,
 		})),
 		errors: [
 			{
@@ -157,14 +164,10 @@ export const translationEngine: TranslationEngine = {
 			);
 		}
 
-		const provider = await resolveProvider();
-
 		const updatedRequest: TranslationRequest = {
 			...request,
 			units: unitsWithLang,
-			provider,
-			// The local model is hard-wired to Vietnamese; the API honours the request.
-			targetLang: provider === "api" ? request.targetLang : TARGET_LANGUAGE,
+			targetLang: TARGET_LANGUAGE,
 		};
 
 		try {
@@ -194,10 +197,8 @@ export const translationEngine: TranslationEngine = {
 	},
 
 	async warmup() {
-		const provider = await resolveProvider();
 		const response = await requestWorker({
 			type: "warmup",
-			payload: { provider },
 			requestId: generateRequestId(),
 		});
 		if (response.type !== "status")
@@ -233,68 +234,6 @@ export async function translateRegions(
 ): Promise<TranslationResponse> {
 	const units = groupRegionsIntoTranslationUnits(regions);
 	return translationEngine.translate({ units });
-}
-
-export function applyTranslationsToRegions(
-	regions: OCRRegion[],
-	response: TranslationResponse,
-): OCRRegion[] {
-	const translatedRegions: OCRRegion[] = regions.map((region) => ({
-		...region,
-		translation: undefined,
-		boxes: region.boxes.map((box) => ({ ...box })),
-	}));
-
-	for (const result of response.results) {
-		const candidateIndexes = [
-			...(result.boxIndexes?.map((index) => index.regionIndex) ?? []),
-		];
-		const uniqueCandidateIndexes = [...new Set(candidateIndexes)];
-		const searchIndexes =
-			uniqueCandidateIndexes.length > 0
-				? uniqueCandidateIndexes
-				: translatedRegions.map((_region, index) => index);
-
-		let targetIndex: number | undefined;
-		let largestIntersection = -1;
-		for (const index of searchIndexes) {
-			const area = intersectionArea(
-				result.bbox,
-				translatedRegions[index].bounds,
-			);
-			if (area > largestIntersection) {
-				largestIntersection = area;
-				targetIndex = index;
-			}
-		}
-		if (targetIndex === undefined || largestIntersection <= 0) continue;
-
-		const previousTranslation = translatedRegions[targetIndex].translation;
-		const translation = previousTranslation
-			? `${previousTranslation} ${result.translatedText}`
-			: result.translatedText;
-		translatedRegions[targetIndex] = {
-			...translatedRegions[targetIndex],
-			translation,
-			boxes: translatedRegions[targetIndex].boxes.map((box) => ({
-				...box,
-				translation,
-			})),
-		};
-	}
-
-	return translatedRegions;
-}
-
-function intersectionArea(
-	bbox: { x: number; y: number; width: number; height: number },
-	bounds: { top: number; left: number; width: number; height: number },
-): number {
-	const left = Math.max(bbox.x, bounds.left);
-	const top = Math.max(bbox.y, bounds.top);
-	const right = Math.min(bbox.x + bbox.width, bounds.left + bounds.width);
-	const bottom = Math.min(bbox.y + bbox.height, bounds.top + bounds.height);
-	return Math.max(0, right - left) * Math.max(0, bottom - top);
 }
 
 export { MAX_TRANSLATION_CHARS, TARGET_LANGUAGE };

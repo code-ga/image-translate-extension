@@ -8,7 +8,6 @@ import type {
 	ModelProgress,
 	NllbLanguageCode,
 	TranslationError,
-	TranslationProvider,
 	TranslationRequest,
 	TranslationResponse,
 	TranslationResult,
@@ -23,16 +22,6 @@ type CachedUnit = {
 	tokens: TokenMap;
 };
 
-/**
- * Cached translations are namespaced per provider so switching between the
- * hosted API and the local model never serves one engine's output to the other.
- */
-const API_CACHE_NAMESPACE = "google-translate-api-v1";
-
-function cacheNamespace(provider: TranslationProvider): string {
-	return provider === "api" ? API_CACHE_NAMESPACE : MODEL_VERSION;
-}
-
 function originalResult(unit: TranslationUnit): TranslationResult {
 	return {
 		unitId: unit.id,
@@ -40,8 +29,6 @@ function originalResult(unit: TranslationUnit): TranslationResult {
 		sourceLanguage: unit.detectedLanguage,
 		cached: false,
 		bbox: unit.bbox,
-		boxReferences: unit.boxReferences,
-		boxIndexes: unit.boxIndexes,
 	};
 }
 
@@ -57,8 +44,6 @@ export async function scheduleTranslation(
 	request: TranslationRequest,
 	onProgress?: (progress: ModelProgress) => void,
 ): Promise<TranslationResponse> {
-	const provider: TranslationProvider = request.provider ?? "local";
-	const cacheVersion = cacheNamespace(provider);
 	const results = new Map<string, TranslationResult>();
 	const errors: TranslationError[] = [];
 	const translatable: CachedUnit[] = [];
@@ -127,7 +112,7 @@ export async function scheduleTranslation(
 		for (let index = 0; index < units.length; index++) {
 			const unit = units[index];
 			const cached = await getFromCache(
-				cacheVersion,
+				MODEL_VERSION,
 				ENGINE_VERSION,
 				srcLang,
 				TARGET_LANGUAGE,
@@ -147,8 +132,6 @@ export async function scheduleTranslation(
 					uncached.map((unit) => unit.protectedText),
 					srcLang,
 					onProgress,
-					provider,
-					request.targetLang ?? TARGET_LANGUAGE,
 				);
 				for (let index = 0; index < uncached.length; index++) {
 					const unit = uncached[index];
@@ -160,11 +143,9 @@ export async function scheduleTranslation(
 						sourceLanguage: unit.unit.detectedLanguage,
 						cached: false,
 						bbox: unit.unit.bbox,
-						boxReferences: unit.unit.boxReferences,
-						boxIndexes: unit.unit.boxIndexes,
 					});
 					await setInCache(
-						cacheVersion,
+						MODEL_VERSION,
 						ENGINE_VERSION,
 						srcLang,
 						TARGET_LANGUAGE,
@@ -195,8 +176,6 @@ export async function scheduleTranslation(
 					sourceLanguage: unit.unit.detectedLanguage,
 					cached: true,
 					bbox: unit.unit.bbox,
-					boxReferences: unit.unit.boxReferences,
-					boxIndexes: unit.unit.boxIndexes,
 				});
 			} else {
 				results.set(unit.unit.id, originalResult(unit.unit));

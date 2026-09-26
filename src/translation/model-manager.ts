@@ -1,10 +1,8 @@
-import { translateTextsWithGoogle } from "./providers/google-translate";
 import type {
 	ModelProgress,
 	ModelStatus,
 	NllbLanguageCode,
 	TranslationError,
-	TranslationProvider,
 } from "./types";
 import {
 	IDLE_UNLOAD_TIMEOUT_MS,
@@ -123,20 +121,7 @@ async function createTranslator(
 	}
 }
 
-/**
- * In `api` mode no model is ever downloaded or resident: translations go to the
- * hosted endpoint, which keeps the ~2.4 GB NLLB weights off the GPU entirely.
- */
-export async function loadModel(
-	onProgress?: ProgressHandler,
-	provider: TranslationProvider = "local",
-): Promise<void> {
-	if (provider === "api") {
-		status = "READY";
-		notify({ status: "READY", message: "Using the hosted translate API" });
-		return;
-	}
-
+export async function loadModel(onProgress?: ProgressHandler): Promise<void> {
 	if (translator) {
 		status = "READY";
 		return;
@@ -168,23 +153,8 @@ export async function translateTexts(
 	texts: string[],
 	srcLang: NllbLanguageCode,
 	onProgress?: ProgressHandler,
-	provider: TranslationProvider = "local",
-	targetLang: NllbLanguageCode = TARGET_LANGUAGE,
 ): Promise<string[]> {
-	if (provider === "api") {
-		status = "INFERENCE";
-		notify({ status: "INFERENCE", message: "Translating via API" });
-		try {
-			const output = await translateTextsWithGoogle(texts, targetLang);
-			status = "READY";
-			return output;
-		} catch (error) {
-			status = "ERROR";
-			throw error;
-		}
-	}
-
-	if (!translator || status !== "READY") await loadModel(onProgress, "local");
+	if (!translator || status !== "READY") await loadModel(onProgress);
 	if (!translator) throw new Error("Translation model is not loaded");
 
 	status = "INFERENCE";
