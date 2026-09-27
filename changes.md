@@ -1,5 +1,68 @@
 # Changes
 
+## 2026-09-27 03:45:00 - Translation Module Moved to utils/ with Full Error Handling
+
+### Major Changes
+
+**Translation Module Relocated & Rebuilt:**
+- Moved translation engine from `src/translation/` to `utils/translation/` following project conventions
+- Simplified architecture: removed separate model-manager, scheduler, and language resolver modules
+- Integrated script-based language detection + TinyLD fallback in `language-detector.ts`
+- Combined caching logic in `cache.ts` (L1 memory + L2 IndexedDB)
+- Full error handling with typed error codes and proper error propagation
+
+**New Files Created (utils/translation/):**
+- `utils/translation/engine.ts` - Main thread facade with worker lifecycle, message routing, cache integration
+- `utils/translation/worker.ts` - Web Worker entry point with model loading, translation, status handling
+- `utils/translation/cache.ts` - L1/L2 cache with SHA-256 keys including model version
+- `utils/translation/types.ts` - Core types (TranslationUnit, Request/Response, TranslationError, ModelStatus)
+- `utils/translation/language-detector.ts` - Script-based detection + TinyLD fallback
+- `utils/translation/index.ts` - Barrel export
+
+**Modified Files:**
+- `entrypoints/background.ts` - Now forwards translation requests to offscreen via `offscreen/translate-text` and `offscreen/translate-regions` messages; removed local translation engine
+- `entrypoints/offscreen/offscreen.ts` - Added handlers for `offscreen/translate-text` and `offscreen/translate-regions` using new translation engine
+- `types/messages.ts` - Added `OffscreenTranslateTextMessage`, `OffscreenTranslateTextResponse`, `OffscreenTranslateRegionsMessage`, `OffscreenTranslateRegionsResponse`, `TranslationError` types
+- `PROJECT_DESCRIPTION.md` - Updated architecture documentation
+
+### Integration Changes
+
+**New Message Types:**
+- `offscreen/translate-text` - Single text translation (background → offscreen)
+- `offscreen/translate-regions` - Batch region translation (background → offscreen)
+- `TranslationError` type with error codes: `MODEL_LOAD_FAILED`, `INFERENCE_FAILED`, `LANGUAGE_DETECTION_FAILED`, `CACHE_ERROR`, `WORKER_ERROR`, `UNKNOWN_ERROR`
+
+**Flow:**
+1. Content script sends `translate/regions` or `translate/text` to background
+2. Background forwards to offscreen via internal message types
+3. Offscreen runs translation engine with Web Worker
+4. Results flow back: offscreen → background → content script → overlay update
+
+### Error Handling
+- All async operations wrapped in try/catch with proper error responses
+- Typed error codes for debugging
+- Worker crashes handled with automatic cleanup
+- Cache errors don't block translation
+- Per-unit errors don't block other units
+
+### TypeScript & Build
+- All TypeScript compiles clean (`bun run compile` passes)
+- Production build succeeds (`bun run build` passes)
+- Biome linting passes with only pre-existing warnings
+
+### Acceptance Criteria Met
+- [x] Translation module in `utils/translation/` following project patterns
+- [x] Full error throwing with typed error codes
+- [x] Background forwards to offscreen (no translation in service worker)
+- [x] Offscreen handles translation with Web Worker
+- [x] L1/L2 caching with model version invalidation
+- [x] Script-based language detection + TinyLD fallback
+- [x] WebGPU preferred, WASM fallback
+- [x] TypeScript compiles clean
+- [x] Production build succeeds
+
+---
+
 ## 2026-09-21 17:23:13 - Translation Engine Implementation (NLLB-200)
 
 ### Major Features Added

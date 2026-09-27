@@ -160,7 +160,44 @@ export type TranslateRegionsMessage = Message<
 	}
 >;
 
+export type TranslationError = {
+	unitId: string;
+	message: string;
+	code: "MODEL_LOAD_FAILED" | "INFERENCE_FAILED" | "LANGUAGE_DETECTION_FAILED" | "CACHE_ERROR" | "WORKER_ERROR" | "UNKNOWN_ERROR";
+};
+
 export type TranslateRegionsResponse = {
+	success: boolean;
+	regions?: OCRRegion[];
+	errors?: TranslationError[];
+	error?: string;
+};
+
+export type OffscreenTranslateTextMessage = Message<
+	"offscreen/translate-text",
+	{
+		text: string;
+		srcLang: string;
+		targetLang: string;
+	}
+>;
+
+export type OffscreenTranslateTextResponse = {
+	success: boolean;
+	translatedText?: string;
+	detectedLang?: string;
+	error?: string;
+};
+
+export type OffscreenTranslateRegionsMessage = Message<
+	"offscreen/translate-regions",
+	{
+		regions: OCRRegion[];
+		targetLang: string;
+	}
+>;
+
+export type OffscreenTranslateRegionsResponse = {
 	success: boolean;
 	regions?: OCRRegion[];
 	errors?: TranslationError[];
@@ -188,6 +225,8 @@ export type AppMessage =
 	| TranslateCanvasesCommand
 	| TranslateTextMessage
 	| TranslateRegionsMessage
+	| OffscreenTranslateTextMessage
+	| OffscreenTranslateRegionsMessage
 	| TranslateProgressMessage
 	| TranslateCompleteMessage
 	| ContextMenuTranslateMessage

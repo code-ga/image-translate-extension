@@ -4,6 +4,10 @@ import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
 import type {
 	AppMessage,
 	OCRRegion,
+	OffscreenTranslateRegionsMessage,
+	OffscreenTranslateRegionsResponse,
+	OffscreenTranslateTextMessage,
+	OffscreenTranslateTextResponse,
 	ProcessOcrMessage,
 	TranslateRegionsMessage,
 	TranslateRegionsResponse,
@@ -18,14 +22,12 @@ export default defineBackground({
 	async main() {
 		browser.runtime.onStartup.addListener(async () => {
 			await ensureOffscreenRunning();
-			await translationEngine.warmup();
 			console.log("model init successful");
 		});
 
 		browser.runtime.onInstalled.addListener(async () => {
 			console.log("browser extension installed");
 			await ensureOffscreenRunning();
-			await translationEngine.warmup();
 			console.log("model init successful");
 		});
 
@@ -116,11 +118,11 @@ export default defineBackground({
 						sendResponse({ ok: true });
 						return true;
 					case "translate/text": {
-						handleTranslateText(msg, sendResponse);
+						forwardTranslateText(msg, sendResponse);
 						return true;
 					}
 					case "translate/regions": {
-						handleTranslateRegions(msg, sendResponse);
+						forwardTranslateRegions(msg, sendResponse);
 						return true;
 					}
 				}
@@ -253,36 +255,33 @@ async function flushOcrBatch() {
 	}
 }
 
-async function handleTranslateText(
+async function forwardTranslateText(
 	msg: TranslateTextMessage,
 	sendResponse: (response: TranslateTextResponse) => void,
 ): Promise<void> {
 	try {
-		const { text, srcLang, targetLang } = msg;
-		const units: TranslationUnit[] = [
-			{
-				id: `text_${Date.now()}`,
-				sourceText: text,
-				bbox: { x: 0, y: 0, width: 0, height: 0 },
-				boxReferences: [],
-				detectedLanguage: (srcLang || "unknown") as TranslationUnit["detectedLanguage"],
-				detectionConfidence: srcLang ? 1 : 0,
-			},
-		];
-
-		const response = await translationEngine.translate({ units, targetLang: targetLang as NllbLanguageCode });
-
-		if (response.results.length > 0) {
-			sendResponse({
-				success: true,
-				translatedText: response.results[0].translatedText,
+		const offscreenMsg: OffscreenTranslateTextMessage = {
+			from: "background",
+			to: "offscreen",
+			type: "offscreen/translate-text",
+			text: msg.text,
+			srcLang: msg.srcLang,
+			targetLang: msg.targetLang,
+		};
+		const response = await new Promise<OffscreenTranslateTextResponse>((resolve) => {
+			browser.runtime.sendMessage(offscreenMsg, (resp) => {
+				if (browser.runtime.lastError) {
+					resolve({ success: false, error: browser.runtime.lastError.message });
+					return;
+				}
+				resolve(resp as OffscreenTranslateTextResponse);
 			});
-		} else {
-			sendResponse({
-				success: false,
-				error: response.errors[0]?.message || "No translation result",
-			});
-		}
+		});
+		sendResponse({
+			success: response.success,
+			translatedText: response.translatedText,
+			error: response.error,
+		});
 	} catch (error) {
 		sendResponse({
 			success: false,
@@ -291,16 +290,33 @@ async function handleTranslateText(
 	}
 }
 
-async function handleTranslateRegions(
+async function forwardTranslateRegions(
 	msg: TranslateRegionsMessage,
 	sendResponse: (response: TranslateRegionsResponse) => void,
 ): Promise<void> {
 	try {
-		const result = await translateRegions(msg.regions);
-		sendResponse({
-			success: true,
+		const settings = await getExtensionSettings();
+		const offscreenMsg: OffscreenTranslateRegionsMessage = {
+			from: "background",
+			to: "offscreen",
+			type: "offscreen/translate-regions",
 			regions: msg.regions,
-			errors: result.errors,
+			targetLang: settings.targetLang,
+		};
+		const response = await new Promise<OffscreenTranslateRegionsResponse>((resolve) => {
+			browser.runtime.sendMessage(offscreenMsg, (resp) => {
+				if (browser.runtime.lastError) {
+					resolve({ success: false, error: browser.runtime.lastError.message });
+					return;
+				}
+				resolve(resp as OffscreenTranslateRegionsResponse);
+			});
+		});
+		sendResponse({
+			success: response.success,
+			regions: response.regions,
+			errors: response.errors,
+			error: response.error,
 		});
 	} catch (error) {
 		sendResponse({

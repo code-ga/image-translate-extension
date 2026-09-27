@@ -9,29 +9,20 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | File | Role |
 |---|---|
 | `entrypoints/content.ts` | Content script — orchestrates OCR processing, overlay rendering, DOM observation, and auto-translation on page load/URL change |
-| `entrypoints/background.ts` | Service worker — batches OCR requests, manages offscreen document, handles extension settings and context menus, **manages translation engine (Web Worker lifecycle, message routing, warmup)** |
+| `entrypoints/background.ts` | Service worker — batches OCR requests, manages offscreen document, handles extension settings and context menus, forwards translation requests to offscreen |
 | `entrypoints/popup/App.tsx` | Popup UI — polls image/canvas status from the content script on an interval, shows the image/canvas list with status badges, triggers batch translation, and manages the Settings tab. Communicates with the content script via the `ui/` message protocol and listens (via `browser.runtime.onMessage`) for `translate/progress` / `translate/complete` / `extension/error` events to stay in sync. |
-| `entrypoints/offscreen/offscreen.ts` | Offscreen document — runs the PaddleOCR model engine |
+| `entrypoints/offscreen/offscreen.ts` | Offscreen document — runs the PaddleOCR model engine and NLLB translation engine (Web Worker) |
 | `entrypoints/offscreen/index.html` | HTML anchor for the offscreen document |
 
 ### Translation Engine (NEW)
 
 | File | Role |
 |---|---|
-| `src/translation/engine.ts` | Main thread facade — spawns/manages Web Worker, handles worker lifecycle, message routing, falls back gracefully if worker fails |
-| `src/translation/worker.ts` | Web Worker entry point — registers message handlers for `translate`, `warmup`, `dispose`, `status` |
-| `src/translation/model-manager.ts` | Model manager (inside worker) — state machine `UNAVAILABLE → DOWNLOADING → LOADING → READY ↔ INFERENCE → ERROR → READY`, lazy-loads `Xenova/nllb-200-distilled-600M`, WebGPU preferred with WASM fallback, idle unload after 5 min |
-| `src/translation/scheduler.ts` | Translation scheduler (inside worker) — deduplicates identical texts, cache lookup (L1 memory → L2 IndexedDB), groups by source language, batches texts, calls model manager, post-processes, cache writes |
-| `src/translation/cache/translation-cache.ts` | L1 memory Map + L2 IndexedDB persistent cache, SHA-256 key with model/engine version |
-| `src/translation/types.ts` | Core types: TranslationUnit, TranslationRequest/Response, LanguageDetectionResult, NllbLanguageCode, TranslationError, ModelStatus, ModelProgress, worker message types |
-| `src/translation/language/language-map.ts` | Supported source language map (13 languages) → NLLB codes |
-| `src/translation/language/script-detector.ts` | Unicode code point analysis → ScriptStats, identifies language from script (Hangul→kor, Hiragana/Katakana→jpn, etc.) |
-| `src/translation/language/language-detector.ts` | TinyLD integration — wraps `detectAll()`, restricts to supported NLLB languages |
-| `src/translation/language/language-resolver.ts` | Language resolution algorithm: filter useless OCR, script distribution, script-first detection, TinyLD fallback, confidence threshold (0.6), Vietnamese passthrough |
-| `src/translation/preprocess/normalize.ts` | Text normalization: trim, collapse whitespace, normalize line breaks, remove OCR artifacts |
-| `src/translation/preprocess/protect-tokens.ts` | Token protection for URLs, emails, numbers, percentages, currency, hex colors, file paths, code identifiers — replaces with `__TOKEN_N__` placeholders |
-| `src/translation/preprocess/grouping.ts` | Groups OCR boxes into TranslationUnits by line proximity, reading order, enforces 800 char limit with sentence-boundary splitting |
-| `src/translation/postprocess/normalize-output.ts` | Output normalization: trim, collapse whitespace, restore protected tokens |
+| `utils/translation/engine.ts` | Main thread facade — spawns/manages Web Worker, handles worker lifecycle, message routing, falls back gracefully if worker fails |
+| `utils/translation/worker.ts` | Web Worker entry point — registers message handlers for `translate`, `warmup`, `dispose`, `status` |
+| `utils/translation/cache.ts` | L1 memory Map + L2 IndexedDB persistent cache, SHA-256 key with model/engine version |
+| `utils/translation/types.ts` | Core types: TranslationUnit, TranslationRequest/Response, TranslationError, ModelStatus, worker message types |
+| `utils/translation/language-detector.ts` | Script-based detection + TinyLD fallback, maps Unicode scripts to NLLB codes |
 
 ### Utilities
 
@@ -78,12 +69,13 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 14. **Batch OCR**: `ocr-batcher.ts` initializes PaddleOcrService and runs `model.batchRecognize()` on batches of image buffers
 15. **Translation (NEW - NLLB-200)**: 
     - Content script sends `translate/regions` with `OCRRegion[]` to background after OCR completes
-    - Background `translateEngine.translate()` groups regions into `TranslationUnit[]`, runs language detection per unit
-    - Spawns/manages Web Worker (`src/translation/worker.ts`) for translation
-    - Worker scheduler: deduplicates texts, checks L1/L2 cache, groups by source language, batches, calls model manager
-    - Model manager loads `Xenova/nllb-200-distilled-600M` (WebGPU → WASM fallback), translates to Vietnamese (`vie_Latn`)
-    - Results with `cached` flag returned → background → content script → overlay update
-    - Popup `translate/text` requests also handled by same engine with auto-detection
+    - Background forwards to offscreen via `offscreen/translate-regions` message
+    - Offscreen `translateEngine.translate()` groups regions into `TranslationUnit[]`, runs language detection per unit
+    - Spawns/manages Web Worker (`utils/translation/worker.ts`) for translation
+    - Worker: deduplicates texts, checks L1/L2 cache, groups by source language, batches, calls model
+    - Model loads `Xenova/nllb-200-distilled-600M` (WebGPU → WASM fallback), translates to Vietnamese (`vie_Latn`)
+    - Results with `cached` flag returned → offscreen → background → content script → overlay update
+    - Popup `translate/text` requests also handled by same engine with auto-detection via `offscreen/translate-text`
 16. **Extension settings**: `extension-settings.ts` centralizes settings retrieval (`enabled`, `enabledDomains`, `targetLang`) with `DEFAULT_SETTINGS` defaults and domain permission checking, eliminating duplication in `background.ts`
 17. **Popup settings UI**: `entrypoints/popup/App.tsx` Settings tab renders a Default Target Language `<select>` bound to `SUPPORTED_LANGUAGES`; saving writes `targetLang` to `browser.storage.sync` and broadcasts `settings/notify-changed` so content scripts cache the new default
 18. **Per-item independent OCR**: `ocr-batcher.ts` wraps each image's OCR call in its own try/catch via `Promise.allSettled`, so one image's failure cannot affect others in the same batch. Offscreen handler (`offscreen.ts`) preserves per-item results.
@@ -105,6 +97,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 
 ## Notes & Future Work
 
+- **Translation engine re-implemented in utils/ (2026-09-27)**: Moved from `src/translation/` to `utils/translation/` following project conventions. Single NLLB-200 distilled 600M model with automatic language detection handles 13+ source languages → Vietnamese. Runs in Web Worker with WebGPU/WASM, L1/L2 caching, and graceful degradation. Background now forwards translation requests to offscreen document.
 - **Translation engine implemented (2026-09-20)**: Single NLLB-200 distilled 600M model with automatic language detection now handles 13+ source languages → Vietnamese. Replaces per-language opus-mt models. Runs in Web Worker with WebGPU/WASM, L1/L2 caching, token protection, and graceful degradation.
 - **Popup↔content script message-type contract (2026-09-19)**: The popup's `pollPageData` and `progressListener` previously checked non-prefixed message types (`"image-status-list"`, `"translate-images-progress"`, `"extension-error"`) that never matched what the content script / background actually send (`"ui/image-status-list"`, `"translate/progress"`, `"extension/error"`), so the image/canvas lists always stayed empty ("No images found on this page"). Fixed in `App.tsx`: response checks now match the `ui/`-prefixed types and progress listener matches `translate/progress`/`translate/complete`/`extension/error`. `pollPageData` uses `Promise.allSettled` so a missing content script (browser-restricted URLs like `chrome://`/`about:`, not-yet-loaded tabs) only resets state when both polls fail — preserving a partial result. The background `extension/error` handler now relays errors via `runtime.sendMessage` (in addition to the existing `tabs.sendMessage` broadcast) so the popup, which lives in an extension-page context unreachable via `tabs.sendMessage`, also receives them. `types/messages.ts` `ImageStatusListResponse`/`CanvasStatusListResponse` status unions now include `"error"`.
 - **Settings broadcast repair**: The popup previously sent `notify-settings-changed`, which the background never matched (it listened for `settings/notify-changed`), so `settings/changed` was never relayed to content scripts. This has been corrected so settings now propagate live.
