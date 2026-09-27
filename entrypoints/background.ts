@@ -1,8 +1,6 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
-import { translationEngine, translateRegions } from "@/src/translation/engine";
-import type { TranslationResponse, TranslationUnit, NllbLanguageCode } from "@/src/translation/types";
 import type {
 	AppMessage,
 	OCRRegion,

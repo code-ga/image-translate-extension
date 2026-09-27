@@ -1,5 +1,4 @@
 import type { OCRRegion } from "./index";
-import type { TranslationError } from "@/src/translation/types";
 
 export type MessageRoute = {
 	from: "content" | "background" | "offscreen";
