@@ -7,94 +7,32 @@ import type {
 	TranslationResponse,
 	TranslationResult,
 	TranslationUnit,
-	WorkerMessage,
-	WorkerResponse,
 } from "./types";
 
-let worker: Worker | null = null;
-const pendingRequests = new Map<string, (response: WorkerResponse) => void>();
-let requestCounter = 0;
 let isDisposed = false;
+const MOCK_DELAY = 100;
 
-function getWorker(): Worker {
-	if (!worker) {
-		worker = new Worker(new URL("./worker.ts", import.meta.url), {
-			type: "module",
-		});
-		worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-			const response = event.data;
-			const resolver = pendingRequests.get(response.requestId);
-			if (resolver) {
-				pendingRequests.delete(response.requestId);
-				resolver(response);
-			}
-		};
-		worker.onerror = (error) => {
-			console.error("Translation worker error:", error);
-			for (const [, resolver] of pendingRequests) {
-				resolver({
-					type: "error",
-					requestId: "unknown",
-					error: "Worker crashed",
-				});
-			}
-			pendingRequests.clear();
-			worker = null;
-		};
-	}
-	return worker;
-}
-
-function sendToWorker(message: WorkerMessage): Promise<WorkerResponse> {
-	return new Promise((resolve, reject) => {
-		const w = getWorker();
-		pendingRequests.set(message.requestId, resolve);
-		w.postMessage(message);
-		setTimeout(() => {
-			if (pendingRequests.has(message.requestId)) {
-				pendingRequests.delete(message.requestId);
-				reject(new Error("Worker request timeout"));
-			}
-		}, 120000);
-	});
+function mockTranslateText(text: string, targetLang: NllbLanguageCode): string {
+	const mockTranslations: Record<string, Record<NllbLanguageCode, string>> = {
+		Hello: { vie_Latn: "Xin chào", eng_Latn: "Hello" },
+		World: { vie_Latn: "Thế giới", eng_Latn: "World" },
+		Test: { vie_Latn: "Kiểm tra", eng_Latn: "Test" },
+	};
+	return mockTranslations[text]?.[targetLang] || `[${targetLang}] ${text}`;
 }
 
 export async function warmup(): Promise<void> {
 	if (isDisposed) throw new Error("Translation engine disposed");
-	const requestId = `warmup_${++requestCounter}`;
-	const response = await sendToWorker({ type: "warmup", requestId });
-	if (response.type === "error") {
-		throw new Error(response.error);
-	}
-	if (response.type === "warmup" && !response.success) {
-		throw new Error("Warmup failed");
-	}
+	await new Promise((r) => setTimeout(r, MOCK_DELAY));
 }
 
 export async function getStatus(): Promise<ModelStatus> {
 	if (isDisposed) return { state: "unavailable" };
-	const requestId = `status_${++requestCounter}`;
-	const response = await sendToWorker({ type: "status", requestId });
-	if (response.type === "status") {
-		return response.status;
-	}
-	if (response.type === "error") {
-		return { state: "error", message: response.error };
-	}
-	return { state: "error", message: "Status check failed" };
+	return { state: "ready" };
 }
 
 export async function dispose(): Promise<void> {
-	if (!worker || isDisposed) return;
 	isDisposed = true;
-	const requestId = `dispose_${++requestCounter}`;
-	try {
-		await sendToWorker({ type: "dispose", requestId });
-	} finally {
-		worker.terminate();
-		worker = null;
-		pendingRequests.clear();
-	}
 }
 
 export async function translate(
@@ -102,6 +40,8 @@ export async function translate(
 ): Promise<TranslationResponse> {
 	if (isDisposed) throw new Error("Translation engine disposed");
 	if (!request.units.length) return { results: [], errors: [] };
+
+	await new Promise((r) => setTimeout(r, MOCK_DELAY));
 
 	const unitsWithLang = await detectLanguagesForUnits(request.units);
 	const cachedResults: TranslationResult[] = [];
@@ -119,33 +59,23 @@ export async function translate(
 		}
 	}
 
-	if (!uncachedUnits.length) {
-		return { results: cachedResults, errors: [] };
-	}
+	const newResults: TranslationResult[] = uncachedUnits.map((unit) => ({
+		unitId: unit.id,
+		translatedText: mockTranslateText(unit.sourceText, request.targetLang),
+		sourceLang: unit.detectedLanguage,
+		targetLang: request.targetLang,
+		cached: false,
+	}));
 
-	const requestId = `translate_${++requestCounter}`;
 	const workerRequest: TranslationRequest = {
 		units: uncachedUnits,
 		targetLang: request.targetLang,
 	};
-	const response = await sendToWorker({
-		type: "translate",
-		request: workerRequest,
-		requestId,
-	});
-
-	if (response.type === "error") {
-		throw new Error(response.error);
-	}
-	if (response.type !== "translate") {
-		throw new Error("Translation failed");
-	}
-
-	await setCachedTranslation(workerRequest, response.response.results);
+	await setCachedTranslation(workerRequest, newResults);
 
 	return {
-		results: [...cachedResults, ...response.response.results],
-		errors: response.response.errors,
+		results: [...cachedResults, ...newResults],
+		errors: [],
 	};
 }
 
@@ -154,6 +84,8 @@ export async function translateText(
 	srcLang: string,
 	targetLang: NllbLanguageCode,
 ): Promise<{ translatedText: string; detectedLang: NllbLanguageCode }> {
+	if (isDisposed) throw new Error("Translation engine disposed");
+
 	const unit: TranslationUnit = {
 		id: `text_${Date.now()}_${Math.random().toString(36).slice(2)}`,
 		sourceText: text,
@@ -170,9 +102,6 @@ export async function translateText(
 			translatedText: response.results[0].translatedText,
 			detectedLang: response.results[0].sourceLang,
 		};
-	}
-	if (response.errors.length > 0) {
-		throw new Error(response.errors[0].message);
 	}
 	throw new Error("No translation result");
 }
