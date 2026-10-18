@@ -1,5 +1,30 @@
 # Changes
 
+## 2026-10-10 16:58:00 - Language Codes Aligned to NLLB Format
+
+### Changes
+
+- **`utils/languages.ts`**: Changed `SUPPORTED_LANGUAGES` codes from short ISO codes (`en`, `vi`, `es`...) to NLLB format (`eng_Latn`, `vie_Latn`, `spa_Latn`...) to match the translation engine's `NllbLanguageCode` type. Added 16 more languages (Greek, Hebrew, Hungarian, Romanian, Bulgarian, Croatian, Czech, Swedish, Polish, Ukrainian, Danish, Finnish, Norwegian, Malay, Slovak, Slovenian, Estonian, Latvian, Lithuanian) for a total of 38 languages.
+- **`DEFAULT_TARGET_LANG`** remains `"vie_Latn"` (was already correct).
+- **`PROJECT_DESCRIPTION.md`**: Updated documentation to note NLLB format.
+
+### Notes
+
+- The popup Settings UI (`App.tsx`) now shows NLLB codes directly — no conversion layer needed between UI and engine.
+
+## 2026-10-10 15:45:00 - Google Translate API (Free, No-Key) Added for Testing
+
+### Changes
+
+- **New file `utils/translation/google.ts`**: Google Translate API client using the free, no-key endpoint (`translate.google.com/translate_a/single?client=gtx`). Includes NLLB ↔ Google language code mapping for all 33 supported languages.
+- **`utils/translation/engine.ts`**: Replaced mock translation with real Google Translate API calls. Falls back to original text on error.
+- **`utils/translation/index.ts`**: Added barrel export for `google` module.
+
+### Notes
+
+- Google Translate free endpoint has no API key requirement, suitable for testing.
+- Rate limits apply; each unit is translated individually. For production, consider batching or a paid API.
+
 ## 2026-09-27 03:45:00 - Translation Module Moved to utils/ with Full Error Handling
 
 ### Major Changes

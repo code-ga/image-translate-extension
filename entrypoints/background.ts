@@ -118,10 +118,18 @@ export default defineBackground({
 						sendResponse({ ok: true });
 						return true;
 					case "translate/text": {
+						console.log("[Background] translate/text received", {
+							text: msg.text,
+							srcLang: msg.srcLang,
+							targetLang: msg.targetLang,
+						});
 						forwardTranslateText(msg, sendResponse);
 						return true;
 					}
 					case "translate/regions": {
+						console.log("[Background] translate/regions received", {
+							regionCount: msg.regions.length,
+						});
 						forwardTranslateRegions(msg, sendResponse);
 						return true;
 					}
@@ -260,6 +268,7 @@ async function forwardTranslateText(
 	sendResponse: (response: TranslateTextResponse) => void,
 ): Promise<void> {
 	try {
+		console.log("[Background] forwarding translate-text to offscreen");
 		const offscreenMsg: OffscreenTranslateTextMessage = {
 			from: "background",
 			to: "offscreen",
@@ -268,14 +277,23 @@ async function forwardTranslateText(
 			srcLang: msg.srcLang,
 			targetLang: msg.targetLang,
 		};
-		const response = await new Promise<OffscreenTranslateTextResponse>((resolve) => {
-			browser.runtime.sendMessage(offscreenMsg, (resp) => {
-				if (browser.runtime.lastError) {
-					resolve({ success: false, error: browser.runtime.lastError.message });
-					return;
-				}
-				resolve(resp as OffscreenTranslateTextResponse);
-			});
+		const response = await new Promise<OffscreenTranslateTextResponse>(
+			(resolve) => {
+				browser.runtime.sendMessage(offscreenMsg, (resp) => {
+					if (browser.runtime.lastError) {
+						resolve({
+							success: false,
+							error: browser.runtime.lastError.message,
+						});
+						return;
+					}
+					resolve(resp as OffscreenTranslateTextResponse);
+				});
+			},
+		);
+		console.log("[Background] translate-text response", {
+			success: response.success,
+			translatedText: response.translatedText,
 		});
 		sendResponse({
 			success: response.success,
@@ -283,6 +301,7 @@ async function forwardTranslateText(
 			error: response.error,
 		});
 	} catch (error) {
+		console.error("[Background] translate-text failed", error);
 		sendResponse({
 			success: false,
 			error: error instanceof Error ? error.message : "Translation failed",
@@ -296,6 +315,10 @@ async function forwardTranslateRegions(
 ): Promise<void> {
 	try {
 		const settings = await getExtensionSettings();
+		console.log("[Background] forwarding translate-regions to offscreen", {
+			regionCount: msg.regions.length,
+			targetLang: settings.targetLang,
+		});
 		const offscreenMsg: OffscreenTranslateRegionsMessage = {
 			from: "background",
 			to: "offscreen",
@@ -303,14 +326,23 @@ async function forwardTranslateRegions(
 			regions: msg.regions,
 			targetLang: settings.targetLang,
 		};
-		const response = await new Promise<OffscreenTranslateRegionsResponse>((resolve) => {
-			browser.runtime.sendMessage(offscreenMsg, (resp) => {
-				if (browser.runtime.lastError) {
-					resolve({ success: false, error: browser.runtime.lastError.message });
-					return;
-				}
-				resolve(resp as OffscreenTranslateRegionsResponse);
-			});
+		const response = await new Promise<OffscreenTranslateRegionsResponse>(
+			(resolve) => {
+				browser.runtime.sendMessage(offscreenMsg, (resp) => {
+					if (browser.runtime.lastError) {
+						resolve({
+							success: false,
+							error: browser.runtime.lastError.message,
+						});
+						return;
+					}
+					resolve(resp as OffscreenTranslateRegionsResponse);
+				});
+			},
+		);
+		console.log("[Background] translate-regions response", {
+			success: response.success,
+			regionCount: response.regions?.length,
 		});
 		sendResponse({
 			success: response.success,
@@ -319,6 +351,7 @@ async function forwardTranslateRegions(
 			error: response.error,
 		});
 	} catch (error) {
+		console.error("[Background] translate-regions failed", error);
 		sendResponse({
 			success: false,
 			error: error instanceof Error ? error.message : "Translation failed",

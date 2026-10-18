@@ -33,7 +33,7 @@ function App() {
 		"domain",
 	);
 	const [currentDomain, setCurrentDomain] = useState<string>("");
-	const [targetLang, setTargetLang] = useState("vi");
+	const [targetLang, setTargetLang] = useState("vie_Latn");
 	const [imageCount, setImageCount] = useState(0);
 	const [canvasCount, setCanvasCount] = useState(0);
 	const [imageProcessingCount, setImageProcessingCount] = useState(0);
@@ -49,11 +49,11 @@ function App() {
 		const settings = result[STORAGE_KEY] || {
 			enabledDomains: [],
 			enabled: true,
-			targetLang: "vi",
+			targetLang: "vie_Latn",
 		};
 		setEnabledDomains(settings.enabledDomains || []);
 		setGlobalEnabled(settings.enabled ?? true);
-		setTargetLang(settings.targetLang || "vi");
+		setTargetLang(settings.targetLang || "vie_Latn");
 	}, []);
 
 	const saveSettings = useCallback(
@@ -70,14 +70,14 @@ function App() {
 				...(current[STORAGE_KEY] || {
 					enabledDomains: [],
 					enabled: true,
-					targetLang: "vi",
+					targetLang: "vie_Latn",
 				}),
 				...updates,
 			};
 			await browser.storage.sync.set({ [STORAGE_KEY]: settings });
 			setEnabledDomains(settings.enabledDomains || []);
 			setGlobalEnabled(settings.enabled ?? true);
-			setTargetLang(settings.targetLang || "vi");
+			setTargetLang(settings.targetLang || "vie_Latn");
 
 			browser.runtime
 				.sendMessage({
@@ -85,7 +85,7 @@ function App() {
 					settings: {
 						enabled: settings.enabled ?? true,
 						enabledDomains: settings.enabledDomains || [],
-						targetLang: settings.targetLang || "vi",
+						targetLang: settings.targetLang || "vie_Latn",
 					},
 				})
 				.catch(() => {});

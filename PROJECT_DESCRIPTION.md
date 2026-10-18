@@ -23,6 +23,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | `utils/translation/cache.ts` | L1 memory Map + L2 IndexedDB persistent cache, SHA-256 key with model/engine version |
 | `utils/translation/types.ts` | Core types: TranslationUnit, TranslationRequest/Response, TranslationError, ModelStatus, worker message types |
 | `utils/translation/language-detector.ts` | Script-based detection + TinyLD fallback, maps Unicode scripts to NLLB codes |
+| `utils/translation/google.ts` | Google Translate API client (free, no-key) for testing — maps NLLB ↔ Google language codes |
 
 ### Utilities
 
@@ -38,7 +39,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | `utils/extension-settings.ts` | Centralized settings retrieval and domain permission checking; defines `ExtensionSettings` (including `targetLang`) with `DEFAULT_SETTINGS` defaults and `getExtensionSettings()` merge |
 | `utils/domain-matcher.ts` | URL domain/pattern matching for extension enablement rules |
 | `utils/constants.ts` | Shared constants (offscreen paths, message targets) |
-| `utils/languages.ts` | Supported languages list (`SUPPORTED_LANGUAGES`), `DEFAULT_TARGET_LANG` ("vi"), and `Language` type used by the popup Settings UI and the hover translation popup language selector |
+| `utils/languages.ts` | Supported languages list (`SUPPORTED_LANGUAGES`), `DEFAULT_TARGET_LANG` ("vie_Latn"), and `Language` type used by the popup Settings UI and the hover translation popup language selector. Codes use NLLB format (e.g. `eng_Latn`, `vie_Latn`, `zho_Hans`) |
 | `utils/popup-base.ts` | Shared popup base: z-index, font, border-radius, box-shadow constants, container creation, and keyframe animation injection |
 | `utils/toast.ts` | Inline DOM toast notifications using shared popup base; debounce, dedup, auto-removal |
 | `utils/translation-popup.ts` | Hover-activated translation popup for OCR overlay boxes; mouseenter on box shows popup with debounce, mouseleave on box or popup starts delayed close; race-condition-safe response updates. The popup renders the original OCR text, a target-language `<select>` (default taken from the cached extension setting), and a color-coded result area. Changing the select re-translates the same text with the new target language. Public API: `showTranslationPopup(anchor, text, onReady?)`, `dismissTranslationPopup()`, `cancelCloseDelay()`, `startCloseDelay(cb, ms?)`, `setDefaultTargetLang(lang)` |
@@ -97,6 +98,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 
 ## Notes & Future Work
 
+- **Google Translate API added for testing (2026-10-10)**: `utils/translation/google.ts` provides a free, no-key Google Translate API client. `engine.ts` now uses it instead of mock translations. Maps NLLB language codes to Google's format for all 33 supported languages. Falls back to original text on error. Suitable for testing only; rate limits apply.
 - **Translation engine re-implemented in utils/ (2026-09-27)**: Moved from `src/translation/` to `utils/translation/` following project conventions. Single NLLB-200 distilled 600M model with automatic language detection handles 13+ source languages → Vietnamese. Runs in Web Worker with WebGPU/WASM, L1/L2 caching, and graceful degradation. Background now forwards translation requests to offscreen document.
 - **Translation engine implemented (2026-09-20)**: Single NLLB-200 distilled 600M model with automatic language detection now handles 13+ source languages → Vietnamese. Replaces per-language opus-mt models. Runs in Web Worker with WebGPU/WASM, L1/L2 caching, token protection, and graceful degradation.
 - **Popup↔content script message-type contract (2026-09-19)**: The popup's `pollPageData` and `progressListener` previously checked non-prefixed message types (`"image-status-list"`, `"translate-images-progress"`, `"extension-error"`) that never matched what the content script / background actually send (`"ui/image-status-list"`, `"translate/progress"`, `"extension/error"`), so the image/canvas lists always stayed empty ("No images found on this page"). Fixed in `App.tsx`: response checks now match the `ui/`-prefixed types and progress listener matches `translate/progress`/`translate/complete`/`extension/error`. `pollPageData` uses `Promise.allSettled` so a missing content script (browser-restricted URLs like `chrome://`/`about:`, not-yet-loaded tabs) only resets state when both polls fail — preserving a partial result. The background `extension/error` handler now relays errors via `runtime.sendMessage` (in addition to the existing `tabs.sendMessage` broadcast) so the popup, which lives in an extension-page context unreachable via `tabs.sendMessage`, also receives them. `types/messages.ts` `ImageStatusListResponse`/`CanvasStatusListResponse` status unions now include `"error"`.

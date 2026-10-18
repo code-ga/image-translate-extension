@@ -114,6 +114,9 @@ async function translateAndUpdateOverlay(
 	renderOverlay: (regions: OCRRegion[]) => void,
 ): Promise<void> {
 	try {
+		console.log("[Content] sending translate/regions", {
+			regionCount: ocrRegions.length,
+		});
 		const response = await browser.runtime.sendMessage({
 			from: "content",
 			to: "background",
@@ -122,11 +125,16 @@ async function translateAndUpdateOverlay(
 		} satisfies TranslateRegionsMessage);
 
 		if (response?.success && response.regions) {
+			console.log("[Content] translate/regions success", {
+				regionCount: response.regions.length,
+			});
 			const translatedRegions = response.regions;
 			renderOverlay(translatedRegions);
+		} else {
+			console.log("[Content] translate/regions failed", { response });
 		}
 	} catch (error) {
-		console.error("Translation failed:", error);
+		console.error("[Content] Translation failed:", error);
 	}
 }
 
@@ -217,7 +225,7 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 async function syncSettingsTargetLang() {
 	try {
 		const settings = await getExtensionSettings();
-		setDefaultTargetLang(settings.targetLang || "vi");
+		setDefaultTargetLang(settings.targetLang || "vie_Latn");
 	} catch {
 		// keep previous default on failure
 	}
@@ -409,7 +417,7 @@ export default defineContentScript({
 						return true;
 					case "settings/changed":
 						autoTranslateIfAllowed();
-						setDefaultTargetLang(msg.settings.targetLang || "vi");
+						setDefaultTargetLang(msg.settings.targetLang || "vie_Latn");
 						break;
 					case "background/translate": {
 						const escapedUrl = msg.url.replace(/"/g, '\\"');
