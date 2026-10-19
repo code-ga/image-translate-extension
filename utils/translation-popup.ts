@@ -137,6 +137,27 @@ export function showTranslationPopup(
 		popup.appendChild(sentenceSection.container);
 		const sentenceResultEl = sentenceSection.resultEl;
 
+		if (!existingTranslation) {
+			sentenceResultEl.textContent = "Click button to translate sentence";
+			const translateSentenceBtn = document.createElement("button");
+			translateSentenceBtn.textContent = "Translate sentence";
+			translateSentenceBtn.type = "button";
+			translateSentenceBtn.style.cssText = `
+				margin-top: 6px;
+				padding: 4px 10px;
+				font-size: 11px;
+				cursor: pointer;
+				background: ${POPUP_COLORS.success.bg};
+				color: ${POPUP_COLORS.success.text};
+				border: 1px solid ${POPUP_COLORS.success.border};
+				border-radius: ${POPUP_BORDER_RADIUS};
+			`;
+			translateSentenceBtn.addEventListener("click", () => {
+				requestTranslateText(text, cachedTargetLang, sentenceResultEl, popup);
+			});
+			sentenceSection.container.appendChild(translateSentenceBtn);
+		}
+
 		let wordResultEl: HTMLElement | null = null;
 		if (word && word !== text) {
 			const wordSection = createTranslationRow(`Word: "${word}"`, word);
@@ -153,9 +174,6 @@ export function showTranslationPopup(
 		currentWordResultEl = wordResultEl;
 		currentWordText = word;
 
-		if (!existingTranslation) {
-			requestTranslateText(text, cachedTargetLang, sentenceResultEl, popup);
-		}
 		if (wordResultEl) {
 			requestTranslateText(word, cachedTargetLang, wordResultEl, popup);
 		}

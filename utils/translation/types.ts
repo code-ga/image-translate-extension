@@ -35,7 +35,7 @@ export type NllbLanguageCode =
 	| "slv_Latn"
 	| "est_Latn"
 	| "lav_Latn"
-	| "lit_Latn"
+	| "lit_Latn";
 
 export type TranslationUnit = {
 	id: string;
@@ -63,12 +63,12 @@ export type TranslationError = {
 	unitId: string;
 	message: string;
 	code:
-	| "MODEL_LOAD_FAILED"
-	| "INFERENCE_FAILED"
-	| "LANGUAGE_DETECTION_FAILED"
-	| "CACHE_ERROR"
-	| "WORKER_ERROR"
-	| "UNKNOWN_ERROR";
+		| "MODEL_LOAD_FAILED"
+		| "INFERENCE_FAILED"
+		| "LANGUAGE_DETECTION_FAILED"
+		| "CACHE_ERROR"
+		| "WORKER_ERROR"
+		| "UNKNOWN_ERROR";
 };
 
 export type TranslationResponse = {

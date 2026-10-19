@@ -5,10 +5,9 @@ export type MessageRoute = {
 	to: "background" | "content" | "offscreen" | "all";
 };
 
-export type Message<T extends string, P extends object = {}> =
-	MessageRoute & {
-		type: T;
-	} & P;
+export type Message<T extends string, P extends object = {}> = MessageRoute & {
+	type: T;
+} & P;
 
 export type ProcessOcrMessage = Message<
 	"ocr/process",
@@ -42,7 +41,9 @@ export type NotifySettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains:
+				| string
+				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
 		};
 	}
@@ -53,7 +54,9 @@ export type SettingsChangedMessage = Message<
 	{
 		settings: {
 			enabled: boolean;
-			enabledDomains: string | { pattern: string; matchType: "domain" | "include" | "regex" }[];
+			enabledDomains:
+				| string
+				| { pattern: string; matchType: "domain" | "include" | "regex" }[];
 			targetLang: string;
 		};
 	}
@@ -163,7 +166,13 @@ export type TranslateRegionsMessage = Message<
 export type TranslationError = {
 	unitId: string;
 	message: string;
-	code: "MODEL_LOAD_FAILED" | "INFERENCE_FAILED" | "LANGUAGE_DETECTION_FAILED" | "CACHE_ERROR" | "WORKER_ERROR" | "UNKNOWN_ERROR";
+	code:
+		| "MODEL_LOAD_FAILED"
+		| "INFERENCE_FAILED"
+		| "LANGUAGE_DETECTION_FAILED"
+		| "CACHE_ERROR"
+		| "WORKER_ERROR"
+		| "UNKNOWN_ERROR";
 };
 
 export type TranslateRegionsResponse = {

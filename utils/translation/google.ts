@@ -109,7 +109,7 @@ export async function googleTranslateText(
 		)
 		.filter(Boolean)
 		.join("");
-		console.log(translated)
+	console.log(translated);
 
 	const detectedLang =
 		data.length >= 13 && typeof data[13] === "string"

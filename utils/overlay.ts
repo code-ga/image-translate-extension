@@ -1,8 +1,8 @@
 import type { OCRBox, OCRRegion } from "@/types";
 import {
-	showTranslationPopup,
-	dismissTranslationPopup,
 	cancelCloseDelay,
+	dismissTranslationPopup,
+	showTranslationPopup,
 	startCloseDelay,
 } from "@/utils/translation-popup";
 
@@ -67,7 +67,7 @@ export function addOcrBoxes(
 				10,
 				((Math.min(box.box.height, box.box.width) * box.box.width) /
 					elementWidth) *
-				0.7,
+					0.7,
 			);
 			const boxDiv = document.createElement("div");
 

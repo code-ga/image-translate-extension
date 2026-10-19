@@ -1,11 +1,11 @@
 import {
 	getOrCreateContainer,
 	injectPopupStyles,
-	POPUP_Z_INDEX,
-	POPUP_FONT,
 	POPUP_BORDER_RADIUS,
 	POPUP_BOX_SHADOW,
 	POPUP_COLORS,
+	POPUP_FONT,
+	POPUP_Z_INDEX,
 } from "./popup-base";
 
 const TOAST_CONTAINER_ID = "ocr-toast-container";

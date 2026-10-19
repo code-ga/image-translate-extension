@@ -1,5 +1,6 @@
 export const POPUP_Z_INDEX = "2147483647";
-export const POPUP_FONT = "-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif";
+export const POPUP_FONT =
+	'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif';
 export const POPUP_BORDER_RADIUS = "6px";
 export const POPUP_BOX_SHADOW = "0 4px 12px rgba(0,0,0,0.4)";
 
@@ -10,7 +11,10 @@ export const POPUP_COLORS = {
 	success: { bg: "#1a2a1f", border: "#253025", text: "#6bff6b" },
 };
 
-export function getOrCreateContainer(id: string, extraStyles: string = ""): HTMLElement {
+export function getOrCreateContainer(
+	id: string,
+	extraStyles: string = "",
+): HTMLElement {
 	let container = document.getElementById(id);
 	if (!container) {
 		container = document.createElement("div");
