@@ -141,7 +141,7 @@ export default defineBackground({
 
 interface OcrBatchItem {
 	msg: ProcessOcrMessage;
-	sendResponse: (response: any) => void;
+	sendResponse: (response: { success: boolean; ocrData?: OCRRegion[]; error?: string }) => void;
 }
 
 const ocrBatchQueue: OcrBatchItem[] = [];
@@ -199,7 +199,7 @@ async function flushOcrBatch() {
 
 		const response = await new Promise<{
 			success: boolean;
-			results?: any[];
+			results?: { success: boolean; data?: OCRRegion[]; error?: string }[];
 			error?: string;
 		}>((resolve) => {
 			browser.runtime.sendMessage(
@@ -220,7 +220,7 @@ async function flushOcrBatch() {
 					resolve(
 						msgResponse as {
 							success: boolean;
-							results?: any[];
+							results?: { success: boolean; data?: OCRRegion[]; error?: string }[];
 							error?: string;
 						},
 					);

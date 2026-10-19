@@ -5,7 +5,7 @@ export type MessageRoute = {
 	to: "background" | "content" | "offscreen" | "all";
 };
 
-export type Message<T extends string, P extends object = {}> = MessageRoute & {
+export type Message<T extends string, P extends object = Record<string, never>> = MessageRoute & {
 	type: T;
 } & P;
 
