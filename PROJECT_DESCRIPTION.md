@@ -8,9 +8,9 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 
 | File | Role |
 |---|---|
-| `entrypoints/content.ts` | Content script — orchestrates OCR processing, overlay rendering, DOM observation, and auto-translation on page load/URL change |
-| `entrypoints/background.ts` | Service worker — batches OCR requests, manages offscreen document, handles extension settings and context menus, forwards translation requests to offscreen |
-| `entrypoints/popup/App.tsx` | Popup UI — polls image/canvas status from the content script on an interval, shows the image/canvas list with status badges, triggers batch translation, and manages the Settings tab. Communicates with the content script via the `ui/` message protocol and listens (via `browser.runtime.onMessage`) for `translate/progress` / `translate/complete` / `extension/error` events to stay in sync. |
+| `entrypoints/content.ts` | Content script — orchestrates OCR processing, overlay rendering, DOM observation, and auto-translation on page load/URL change. Tracks per-element OCR/translation state (`processingSet`, `processed`, `translated`, `errorMap`) and reports job lifecycle (`ocr/job-started`, `ocr/job-completed`, `ocr/job-failed`) to the background |
+| `entrypoints/background.ts` | Service worker — batches OCR requests, **serves repeated images from a shared in-memory OCR cache**, maintains the **cross-tab OCR job registry** (`ocr/get-queue`), manages offscreen document, handles extension settings and context menus, forwards translation requests to offscreen |
+| `entrypoints/popup/App.tsx` | Popup UI — polls image/canvas status from the content script on an interval, shows the image/canvas list with status badges, **renders the cross-tab "Processing queue" section from `ocr/get-queue`**, triggers batch translation, and manages the Settings tab. Communicates with the content script via the `ui/` message protocol and listens (via `browser.runtime.onMessage`) for `translate/progress` / `translate/complete` / `extension/error` events to stay in sync. |
 | `entrypoints/offscreen/offscreen.ts` | Offscreen document — runs the PaddleOCR model engine and NLLB translation engine (Web Worker) |
 | `entrypoints/offscreen/index.html` | HTML anchor for the offscreen document |
 
@@ -30,9 +30,10 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 | File | Role |
 |---|---|
 | `utils/overlay.ts` | Shared overlay DOM creation, positioning, box rendering, and container management |
-| `utils/element-state.ts` | Generic element tracking (processing set, processed map, overlay map, mutation maps, resize observer, **error map**) with lifecycle cleanup; exposes `setError`/`getError`/`clearError` for per-element error tracking |
-| `utils/ocr-pipeline.ts` | Image URL resolution (srcset), canvas-to-base64, fetch-to-base64, and sending OCR jobs to background |
+| `utils/element-state.ts` | Generic element tracking (processing set, processed map, **translated map**, overlay map, mutation maps, resize observer, **error map**) with lifecycle cleanup; exposes `setError`/`getError`/`clearError` for per-element error tracking and `setTranslated`/`getTranslated`/`hasTranslated`/`clearTranslated` for "translated overlay actually painted" tracking |
+| `utils/ocr-pipeline.ts` | Image URL resolution (srcset), canvas-to-base64, fetch-to-base64, and sending OCR jobs to background (carries `targetType`/`target` metadata and returns the background `jobId`) |
 | `utils/ocr-region-grouping.ts` | Spatial grouping of OCR word/line boxes into logical text regions using adjacency heuristics and convex hull |
+| `utils/ocr-cache.ts` | Shared in-memory **LRU OCR result cache** (`OcrCache` class: `get`/`set`/`has`/`delete`/`clear`/`size`, cap 100 entries) plus `hashImageData()` — SHA-256 key helper: URL items are keyed by URL hash, base64/canvas items by decoded content hash |
 | `utils/dom-observer.ts` | Live MutationObserver for new DOM nodes, SPA URL change polling, used by content script for auto-translation |
 | `utils/asset-cache.ts` | IndexedDB asset caching, cache URL validation, fetch wrapper installation |
 | `utils/ocr-batcher.ts` | PaddleOcrService model initialization, **per-item independent batch OCR execution via Promise.allSettled**, and region grouping |
@@ -81,6 +82,9 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 17. **Popup settings UI**: `entrypoints/popup/App.tsx` Settings tab renders a Default Target Language `<select>` bound to `SUPPORTED_LANGUAGES`; saving writes `targetLang` to `browser.storage.sync` and broadcasts `settings/notify-changed` so content scripts cache the new default
 18. **Per-item independent OCR**: `ocr-batcher.ts` wraps each image's OCR call in its own try/catch via `Promise.allSettled`, so one image's failure cannot affect others in the same batch. Offscreen handler (`offscreen.ts`) preserves per-item results.
 19. **Error tracking & popup display**: `element-state.ts` adds `errorMap` with `setError`/`getError`/`clearError`; `content.ts` marks failed images/canvases as "error" status before calling `onComplete`; `types/index.ts` extends `ImageInfoWithStatus`/`CanvasInfoWithStatus` with `"error"` status; popup (`App.tsx`) shows error badges on tabs, "Error" label in list items, and `.status-error` / `.tab-badge.error` styles.
+20. **Shared OCR cache**: `background.ts` keeps a single `OcrCache` instance (LRU, 100 entries, memory only) in the service worker. Before an item is forwarded to the offscreen document, `flushOcrBatch()` computes a SHA-256 cache key (`utils/ocr-cache.ts`) and serves the result from the cache when present; successful OCR results are written back to the cache. Because the cache lives in the background, the same image opened in two tabs only runs PaddleOCR once. URL requests are keyed by URL hash (skips the re-fetch), base64/canvas requests by decoded content hash.
+21. **Accurate "Done" status**: `element-state.ts` tracks a `translated` map keyed by the same content key as `processed` (image src / canvas snapshot). `content.ts` keeps the element in `processingSet` until `translateAndUpdateOverlay()` settles, and only calls `setTranslated()` after the translated overlay has been painted. `collectImageInfo`/`collectCanvasInfo` resolve the status with the priority: `processingSet` → "processing", `errorMap` → "error", `translated` → "done", `processed` (but not translated) → "processing" ("Translating..."), otherwise "pending". `sendOcrToHost` (host-driven overlays) marks the element translated immediately.
+22. **Cross-tab OCR queue**: the background maintains `ocrJobRegistry: Map<jobId, OcrJob>` (TTL 10 min, cap 500 jobs). A job is created when `ocr/process` arrives (tab id/url taken from `sender.tab`), moves `queued → processing` when it is dispatched, and settles as `done`/`error` when the content script reports `ocr/job-completed` / `ocr/job-failed` (or when the background itself detects an OCR failure). The popup polls `ocr/get-queue` and renders the jobs grouped by tab URL with status badges inside the Images tab ("Processing queue" section).
 
 ## Key Design Patterns
 
@@ -91,6 +95,9 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 - **Observer lifecycle**: Every resize observer, mutation observer, and overlay DOM node is tracked and cleaned up on element removal or src change
 - **Per-item OCR independence**: `ocr-batcher.ts` uses `Promise.allSettled` with per-item try/catch to ensure one image's OCR failure cannot cascade to other images in the batch
 - **Persistent error state**: `element-state.ts` `errorMap` tracks per-element errors through the processing lifecycle; errors survive `onComplete` cleanup so the popup can display them via `collectImageInfo`/`collectCanvasInfo`
+- **Shared OCR cache**: `utils/ocr-cache.ts` `OcrCache` is a generic LRU map owned by the background service worker; a SHA-256 content/URL key makes identical images share one OCR run across tabs. Cache is memory-only (a service worker restart clears it) and bounded at 100 entries
+- **Translated-state tracking**: `element-state.ts` `translated` map only receives an entry once the translated overlay is painted, so "done" in the popup always means "the user can see the translation"
+- **Cross-tab job registry**: the background is the single source of truth for OCR job state (`queued`/`processing`/`done`/`error`), which keeps the popup's queue correct even when the user switches tabs mid-run
 - **Web Worker isolation**: Translation runs in a dedicated Web Worker (`src/translation/worker.ts`) to keep the UI responsive during model inference
 - **Two-level caching**: L1 in-memory Map for instant hits, L2 IndexedDB for persistence across sessions, with SHA-256 keys including model/engine version for automatic invalidation
 - **Token protection**: Numbers, URLs, currency, code identifiers preserved through translation via placeholder replacement
@@ -98,6 +105,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 
 ## Notes & Future Work
 
+- **OCR cache + accurate popup status + cross-tab queue (2026-10-20)**: Three related fixes landed together. (1) `utils/ocr-cache.ts` was rewritten (it previously held an unused `browser.storage.local` based helper `getCachedOcr`/`storeCachedOcr` that was never imported) into a shared LRU OCR cache (100 entries, memory only) owned by the background service worker; `flushOcrBatch()` checks the cache before contacting the offscreen document and writes successful results back, so the same image in two tabs only runs PaddleOCR once. Cache keys are SHA-256: URL requests by URL hash, base64/canvas requests by decoded content hash. (2) `element-state.ts` gained a `translated` map; the content script keeps the element in `processingSet` until the translation settles and only marks it translated after the translated overlay is painted, so the popup shows "Translating..." instead of a premature "Done". (3) The background now owns an `ocrJobRegistry` (`OcrJob` = id/tabId/tabUrl/type/target/status/createdAt/finishedAt/error) with a 10-minute TTL and a 500-job cap; content scripts report `ocr/job-started` / `ocr/job-completed` / `ocr/job-failed` and the popup polls `ocr/get-queue` to render a "Processing queue" section grouped by tab URL. Note: the plan's message contract used `type: "image"|"canvas"` inside the `ocr/job-started` payload, which collides with the message discriminator `type` — the payload field is therefore named `targetType` (and `tabId`/`tabUrl` are optional, since the background derives them from `sender.tab`).
 - **Google Translate API added for testing (2026-10-10)**: `utils/translation/google.ts` provides a free, no-key Google Translate API client. `engine.ts` now uses it instead of mock translations. Maps NLLB language codes to Google's format for all 33 supported languages. Falls back to original text on error. Suitable for testing only; rate limits apply.
 - **Translation engine re-implemented in utils/ (2026-09-27)**: Moved from `src/translation/` to `utils/translation/` following project conventions. Single NLLB-200 distilled 600M model with automatic language detection handles 13+ source languages → Vietnamese. Runs in Web Worker with WebGPU/WASM, L1/L2 caching, and graceful degradation. Background now forwards translation requests to offscreen document.
 - **Translation engine implemented (2026-09-20)**: Single NLLB-200 distilled 600M model with automatic language detection now handles 13+ source languages → Vietnamese. Replaces per-language opus-mt models. Runs in Web Worker with WebGPU/WASM, L1/L2 caching, token protection, and graceful degradation.
@@ -108,6 +116,7 @@ A browser extension (WebExtension Manifest V3) that detects images and canvas el
 
 ## Out of Scope (MVP)
 
+- Persistent OCR cache across browser restarts (the cache is in-memory only)
 - Server-side translation fallback
 - Per-language model selection
 - User-facing language selection (target fixed to Vietnamese)

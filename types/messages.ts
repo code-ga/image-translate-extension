@@ -1,7 +1,7 @@
 import type { OCRRegion } from "./index";
 
 export type MessageRoute = {
-	from: "content" | "background" | "offscreen";
+	from: "content" | "background" | "offscreen" | "popup";
 	to: "background" | "content" | "offscreen" | "all";
 };
 
@@ -15,8 +15,68 @@ export type ProcessOcrMessage = Message<
 		fetchingType: "url" | "base64";
 		imageData: string;
 		headers?: Record<string, string>;
+		/** Kind of element the OCR request originates from. */
+		targetType?: "image" | "canvas";
+		/** Human readable identifier of the element (image src / canvas index). */
+		target?: string;
 	}
 >;
+
+export type ProcessOcrResponse = {
+	success: boolean;
+	ocrData?: OCRRegion[];
+	error?: string;
+	/** Identifier of the OCR job tracked by the background job registry. */
+	jobId?: string;
+};
+
+export type OcrJobStatus = "queued" | "processing" | "done" | "error";
+
+export type OcrJob = {
+	id: string;
+	tabId: number;
+	tabUrl: string;
+	type: "image" | "canvas";
+	target: string;
+	status: OcrJobStatus;
+	createdAt: number;
+	finishedAt?: number;
+	error?: string;
+};
+
+export type OcrJobStartedMessage = Message<
+	"ocr/job-started",
+	{
+		jobId: string;
+		/** Kind of element the job belongs to. */
+		targetType: "image" | "canvas";
+		/** Human readable identifier of the element (image src / canvas index). */
+		target: string;
+		tabId?: number;
+		tabUrl?: string;
+	}
+>;
+
+export type OcrJobCompletedMessage = Message<
+	"ocr/job-completed",
+	{
+		jobId: string;
+	}
+>;
+
+export type OcrJobFailedMessage = Message<
+	"ocr/job-failed",
+	{
+		jobId: string;
+		error?: string;
+	}
+>;
+
+export type GetOcrQueueMessage = Message<"ocr/get-queue">;
+
+export type GetOcrQueueResponse = {
+	jobs: OcrJob[];
+};
 
 export type BatchRunOcrMessage = Message<
 	"offscreen/batch-run-ocr",
@@ -239,4 +299,8 @@ export type AppMessage =
 	| TranslateProgressMessage
 	| TranslateCompleteMessage
 	| ContextMenuTranslateMessage
-	| ExtensionErrorMessage;
+	| ExtensionErrorMessage
+	| OcrJobStartedMessage
+	| OcrJobCompletedMessage
+	| OcrJobFailedMessage
+	| GetOcrQueueMessage;

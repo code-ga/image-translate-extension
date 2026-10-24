@@ -40,4 +40,6 @@ export type CanvasInfoWithStatus = {
 	status: "pending" | "processing" | "done" | "error";
 };
 
+export type { GetOcrQueueResponse, OcrJob, OcrJobStatus } from "./messages";
+
 export * from "./messages";

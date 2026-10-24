@@ -1,5 +1,33 @@
 # Changes
 
+## 2026-10-20 07:30:00 - OCR Cache, Accurate Popup Status, Cross-Tab OCR Queue
+
+### Changes
+
+- **Rewritten `utils/ocr-cache.ts`**: the file previously held an unused, storage-based helper (`getCachedOcr`/`storeCachedOcr`, `browser.storage.local`, 7-day TTL) that was never imported anywhere; it is replaced by the `OcrCache` class — an in-memory LRU cache (`get`/`set`/`has`/`delete`/`clear`/`size`, cap 100 entries) plus the `hashImageData(imageData, fetchingType)` helper. Cache keys are SHA-256 (`crypto.subtle.digest`): URL items are keyed by URL hash (`url:<hex>`), base64/canvas items by the hash of the decoded binary content (`b64:<hex>`).
+- **`types/messages.ts`**: added `ProcessOcrResponse` (`success`/`ocrData`/`error`/`jobId`), `OcrJobStatus` (`"queued" | "processing" | "done" | "error"`), `OcrJob` (`id`/`tabId`/`tabUrl`/`type`/`target`/`status`/`createdAt`/`finishedAt`/`error`), and the new messages `ocr/job-started`, `ocr/job-completed`, `ocr/job-failed`, `ocr/get-queue` (+ `GetOcrQueueResponse`). `ProcessOcrMessage` gained optional `targetType`/`target` metadata. `MessageRoute.from` now also allows `"popup"`.
+- **`types/index.ts`**: re-exports `OcrJob` / `OcrJobStatus` / `GetOcrQueueResponse`.
+- **`utils/element-state.ts`**: added the `translated` map with `setTranslated`/`getTranslated`/`hasTranslated`/`clearTranslated`, cleared on element reset and cleanup.
+- **`utils/ocr-pipeline.ts`**: `onSuccess` now receives the background `jobId`; OCR requests carry `targetType`/`target` metadata; canvas jobs report their canvas index.
+- **`entrypoints/background.ts`**: owns the shared `OcrCache` — `flushOcrBatch()` resolves a cache key per item, serves cache hits without touching the offscreen document, and stores successful results. Added the `ocrJobRegistry` (TTL 10 min, cap 500) with `createOcrJob`/`updateOcrJobMetadata`/`markJobProcessing`/`settleOcrJob`/`pruneOcrJobs`, the `ocr/job-*` handlers, and the `ocr/get-queue` handler. Batch responses are now sent exactly once per queued item.
+- **`entrypoints/content.ts`**: the element stays in `processingSet` until `translateAndUpdateOverlay()` settles; `setTranslated()` is called only after the translated overlay has been painted, `setError()` on failure. New status priority in `collectImageInfo`/`collectCanvasInfo` (`processing` → `error` → `done` → `processing` → `pending`). Added `ocr/job-started` / `ocr/job-completed` / `ocr/job-failed` reporting. `sendOcrToHost` marks host-driven overlays as translated.
+- **`entrypoints/popup/App.tsx`**: added `queueJobs` state, `ocr/get-queue` polling merged into the existing interval (skipped on the Settings tab), grouping by tab URL, and a "Processing queue" section in the Images tab with per-job status badges.
+- **`entrypoints/popup/App.css`**: styles for the queue section (`.queue-section`, `.queue-header`, `.queue-title`, `.queue-empty`, `.queue-group`, `.queue-tab`, `.queue-item`) and the `.status-queued` badge.
+- **`PROJECT_DESCRIPTION.md`**: documented the cache, the translated-status tracking, and the cross-tab queue (architecture, feature flow, design patterns, notes, out-of-scope).
+
+### Notes
+
+- The popup now shows "Translating..." while the OCR → translation pipeline is in flight and only shows "Done" once the translated overlay is actually painted.
+- The processing queue is rendered inside the Images tab (per the plan's default placement); it can be promoted to a dedicated tab later.
+- The `ocr/job-started` payload field for the element kind is named `targetType` instead of `type` because `type` is already the message discriminator in the `Message<T, P>` helper. `tabId`/`tabUrl` are optional — the background prefers `sender.tab`.
+- The OCR cache is memory-only: a service worker restart clears it (acceptable for the MVP, no IndexedDB persistence yet).
+
+### Validation
+
+- `bun run compile` (`tsc --noEmit`) passes.
+- `bun run build` (WXT, chrome-mv3) succeeds.
+- `biome check` reports no new findings in the touched files (only the pre-existing `any`/format issues that already existed on `HEAD`).
+
 ## 2026-10-10 16:58:00 - Language Codes Aligned to NLLB Format
 
 ### Changes

@@ -1,6 +1,6 @@
 import "./App.css";
-import { useCallback, useEffect, useState } from "react";
-import type { DomainPattern } from "@/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { DomainPattern, GetOcrQueueResponse, OcrJob } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { SUPPORTED_LANGUAGES } from "@/utils/languages";
 
@@ -40,6 +40,7 @@ function App() {
 	const [canvasProcessingCount, setCanvasProcessingCount] = useState(0);
 	const [imageErrorCount, setImageErrorCount] = useState(0);
 	const [canvasErrorCount, setCanvasErrorCount] = useState(0);
+	const [queueJobs, setQueueJobs] = useState<OcrJob[]>([]);
 
 	const loadSettings = useCallback(async () => {
 		const result = (await browser.storage.sync.get(STORAGE_KEY)) as Record<
@@ -164,13 +165,52 @@ function App() {
 		}
 	}, []);
 
+	const pollQueue = useCallback(async () => {
+		try {
+			const response = (await browser.runtime.sendMessage({
+				from: "popup",
+				to: "background",
+				type: "ocr/get-queue",
+			})) as GetOcrQueueResponse | undefined;
+			if (response?.jobs) {
+				setQueueJobs(response.jobs);
+			}
+		} catch (err) {
+			console.error("Poll OCR queue error:", err);
+		}
+	}, []);
+
+	const queueGroups = useMemo(() => {
+		const groups = new Map<string, OcrJob[]>();
+		for (const job of queueJobs) {
+			const key = job.tabUrl || "unknown-tab";
+			const group = groups.get(key);
+			if (group) {
+				group.push(job);
+			} else {
+				groups.set(key, [job]);
+			}
+		}
+		return Array.from(groups.entries());
+	}, [queueJobs]);
+
+	const activeQueueCount = useMemo(
+		() =>
+			queueJobs.filter(
+				(job) => job.status === "queued" || job.status === "processing",
+			).length,
+		[queueJobs],
+	);
+
 	useEffect(() => {
 		loadSettings();
 		pollPageData();
+		pollQueue();
 
 		const interval = setInterval(() => {
 			if (tab !== "settings") {
 				pollPageData();
+				pollQueue();
 			}
 		}, 1500);
 
@@ -195,7 +235,7 @@ function App() {
 			clearInterval(interval);
 			browser.runtime.onMessage.removeListener(progressListener);
 		};
-	}, [loadSettings, pollPageData, tab]);
+	}, [loadSettings, pollPageData, pollQueue, tab]);
 
 	useEffect(() => {
 		if (!error) return;
@@ -252,6 +292,8 @@ function App() {
 
 	const getStatusLabel = (status: string) => {
 		switch (status) {
+			case "queued":
+				return "Queued";
 			case "processing":
 				return "Translating...";
 			case "done":
@@ -265,6 +307,8 @@ function App() {
 
 	const getStatusClass = (status: string) => {
 		switch (status) {
+			case "queued":
+				return "status-queued";
 			case "processing":
 				return "status-processing";
 			case "done":
@@ -274,6 +318,24 @@ function App() {
 			default:
 				return "status-pending";
 		}
+	};
+
+	const formatTabLabel = (tabUrl: string) => {
+		if (!tabUrl || tabUrl === "unknown-tab") return "Unknown tab";
+		try {
+			const url = new URL(tabUrl);
+			return `${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
+		} catch {
+			return tabUrl;
+		}
+	};
+
+	const formatJobTarget = (job: OcrJob) => {
+		if (job.type === "canvas") {
+			const match = /^canvas:(\d+)$/.exec(job.target);
+			return match ? `Canvas #${Number(match[1]) + 1}` : job.target || "Canvas";
+		}
+		return job.target || "Image";
 	};
 
 	return (
@@ -344,6 +406,44 @@ function App() {
 							</div>
 						))
 					)}
+
+					<div className="queue-section">
+						<div className="queue-header">
+							<span className="queue-title">Processing queue</span>
+							{activeQueueCount > 0 && (
+								<span className="tab-badge processing">{activeQueueCount}</span>
+							)}
+						</div>
+						{queueGroups.length === 0 ? (
+							<div className="queue-empty">No OCR jobs in the queue</div>
+						) : (
+							queueGroups.map(([tabUrl, jobs]) => (
+								<div key={tabUrl} className="queue-group">
+									<div className="queue-tab" title={tabUrl}>
+										{formatTabLabel(tabUrl)}
+									</div>
+									{jobs.map((job) => (
+										<div key={job.id} className="queue-item">
+											<div className="item-info">
+												<div
+													className="item-url"
+													title={job.target || job.type}
+												>
+													{formatJobTarget(job)}
+												</div>
+												<div className="item-meta">{job.type}</div>
+											</div>
+											<span
+												className={`status-badge ${getStatusClass(job.status)}`}
+											>
+												{getStatusLabel(job.status)}
+											</span>
+										</div>
+									))}
+								</div>
+							))
+						)}
+					</div>
 				</div>
 			)}
 

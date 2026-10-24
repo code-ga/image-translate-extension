@@ -177,6 +177,79 @@
 	border: 1px solid #5a2e2e;
 }
 
+.status-queued {
+	background: #2a2a3a;
+	color: #a0a0b0;
+	border: 1px solid #3a3a4a;
+}
+
+.queue-section {
+	border-top: 1px solid #3a3a4a;
+	background: #1a1a26;
+}
+
+.queue-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 12px;
+	background: #252536;
+	border-bottom: 1px solid #3a3a4a;
+}
+
+.queue-title {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: #a0a0b0;
+}
+
+.queue-empty {
+	padding: 12px;
+	font-size: 12px;
+	color: #6b6b7b;
+	text-align: center;
+}
+
+.queue-group {
+	border-bottom: 1px solid #2a2a3a;
+}
+
+.queue-group:last-child {
+	border-bottom: none;
+}
+
+.queue-tab {
+	padding: 6px 12px;
+	font-size: 11px;
+	font-weight: 600;
+	color: #4f8ef7;
+	background: #1f1f2e;
+	word-break: break-all;
+}
+
+.queue-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 12px 8px 18px;
+	gap: 8px;
+	border-top: 1px solid #232332;
+}
+
+.queue-item .item-url {
+	font-size: 11px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.queue-item .item-meta {
+	text-transform: capitalize;
+}
+
 @keyframes pulse {
 	0%,
 	100% {

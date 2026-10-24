@@ -2,6 +2,7 @@ import { updateElementOverlayPosition } from "./overlay";
 
 export function createElementState<T extends Element>() {
 	const processed = new Map<T, string>();
+	const translated = new Map<T, string>();
 	const overlayMap = new Map<T, HTMLElement>();
 	const mutationMap = new Map<T, MutationObserver>();
 	const processingSet = new Set<T>();
@@ -43,6 +44,7 @@ export function createElementState<T extends Element>() {
 		if (overlay) overlay.remove();
 		overlayMap.delete(element);
 		processed.delete(element);
+		translated.delete(element);
 		errorMap.delete(element);
 		resizeObserver.unobserve(element);
 		const mo = mutationMap.get(element);
@@ -63,6 +65,29 @@ export function createElementState<T extends Element>() {
 
 	function clearError(element: T) {
 		errorMap.delete(element);
+	}
+
+	/**
+	 * Marks the element as fully translated for the given content key.
+	 * The key mirrors the value stored in `processed` (image src / canvas
+	 * snapshot) so a source change invalidates the translated state.
+	 */
+	function setTranslated(element: T, key: string) {
+		translated.set(element, key);
+	}
+
+	function getTranslated(element: T): string | undefined {
+		return translated.get(element);
+	}
+
+	function hasTranslated(element: T, key?: string): boolean {
+		const value = translated.get(element);
+		if (value === undefined) return false;
+		return key === undefined ? true : value === key;
+	}
+
+	function clearTranslated(element: T) {
+		translated.delete(element);
 	}
 
 	function observeElementAttributes(
@@ -90,12 +115,14 @@ export function createElementState<T extends Element>() {
 		mutationMap.clear();
 		overlayMap.clear();
 		processed.clear();
+		translated.clear();
 		processingSet.clear();
 		errorMap.clear();
 	}
 
 	return {
 		processed,
+		translated,
 		overlayMap,
 		mutationMap,
 		processingSet,
@@ -107,6 +134,10 @@ export function createElementState<T extends Element>() {
 		setError,
 		getError,
 		clearError,
+		setTranslated,
+		getTranslated,
+		hasTranslated,
+		clearTranslated,
 		cleanup,
 	};
 }

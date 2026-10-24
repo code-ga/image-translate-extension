@@ -3,12 +3,16 @@ declare const self: ServiceWorkerGlobalScope;
 import { OCR_BATCH_DEBOUNCE_MS, OCR_BATCH_SIZE } from "@/config/ocr-config";
 import type {
 	AppMessage,
+	GetOcrQueueResponse,
 	OCRRegion,
+	OcrJob,
+	OcrJobStatus,
 	OffscreenTranslateRegionsMessage,
 	OffscreenTranslateRegionsResponse,
 	OffscreenTranslateTextMessage,
 	OffscreenTranslateTextResponse,
 	ProcessOcrMessage,
+	ProcessOcrResponse,
 	TranslateRegionsMessage,
 	TranslateRegionsResponse,
 	TranslateTextMessage,
@@ -16,6 +20,7 @@ import type {
 } from "@/types";
 import { isUrlAllowed } from "@/utils/domain-matcher";
 import { getExtensionSettings } from "@/utils/extension-settings";
+import { hashImageData, OcrCache } from "@/utils/ocr-cache";
 
 export default defineBackground({
 	type: "module",
@@ -66,12 +71,50 @@ export default defineBackground({
 		});
 
 		browser.runtime.onMessage.addListener(
-			(msg: AppMessage, _sender, sendResponse) => {
+			(msg: AppMessage, sender, sendResponse) => {
 				switch (msg.type) {
-					case "ocr/process":
-						ocrBatchQueue.push({ msg, sendResponse });
+					case "ocr/process": {
+						const job = createOcrJob(
+							msg,
+							sender.tab?.id ?? -1,
+							sender.tab?.url ?? "",
+						);
+						ocrBatchQueue.push({
+							msg,
+							sendResponse,
+							jobId: job.id,
+							responded: false,
+						});
 						scheduleBatchFlush();
 						return true;
+					}
+					case "ocr/job-started": {
+						updateOcrJobMetadata(msg.jobId, {
+							type: msg.targetType,
+							target: msg.target,
+							tabId: msg.tabId,
+							tabUrl: msg.tabUrl,
+						});
+						sendResponse({ ok: true });
+						return true;
+					}
+					case "ocr/job-completed": {
+						settleOcrJob(msg.jobId, "done");
+						sendResponse({ ok: true });
+						return true;
+					}
+					case "ocr/job-failed": {
+						settleOcrJob(msg.jobId, "error", msg.error);
+						sendResponse({ ok: true });
+						return true;
+					}
+					case "ocr/get-queue": {
+						pruneOcrJobs();
+						sendResponse({
+							jobs: Array.from(ocrJobRegistry.values()),
+						} satisfies GetOcrQueueResponse);
+						return true;
+					}
 					case "settings/get":
 						getExtensionSettings().then((settings) => {
 							sendResponse(settings);
@@ -141,12 +184,104 @@ export default defineBackground({
 
 interface OcrBatchItem {
 	msg: ProcessOcrMessage;
-	sendResponse: (response: { success: boolean; ocrData?: OCRRegion[]; error?: string }) => void;
+	sendResponse: (response: ProcessOcrResponse) => void;
+	jobId: string;
+	responded: boolean;
+}
+
+/** Sends the OCR response exactly once per queued item. */
+function respondToItem(item: OcrBatchItem, response: ProcessOcrResponse) {
+	if (item.responded) return;
+	item.responded = true;
+	item.sendResponse(response);
 }
 
 const ocrBatchQueue: OcrBatchItem[] = [];
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
 let activeBatchCount = 0;
+
+/**
+ * Shared OCR result cache. Lives in the background service worker so every
+ * tab reuses the same instance — the same image opened in two tabs only runs
+ * the PaddleOCR engine once.
+ */
+const ocrCache = new OcrCache();
+
+/** Cross-tab registry of OCR jobs, used by the popup's processing queue. */
+const ocrJobRegistry = new Map<string, OcrJob>();
+const OCR_JOB_TTL_MS = 10 * 60 * 1000;
+const OCR_JOB_MAX_ENTRIES = 500;
+
+function pruneOcrJobs() {
+	const now = Date.now();
+	for (const [id, job] of ocrJobRegistry) {
+		if (now - job.createdAt > OCR_JOB_TTL_MS) {
+			ocrJobRegistry.delete(id);
+		}
+	}
+	while (ocrJobRegistry.size > OCR_JOB_MAX_ENTRIES) {
+		const oldest = ocrJobRegistry.keys().next();
+		if (oldest.done) break;
+		ocrJobRegistry.delete(oldest.value);
+	}
+}
+
+function createOcrJob(
+	msg: ProcessOcrMessage,
+	tabId: number,
+	tabUrl: string,
+): OcrJob {
+	pruneOcrJobs();
+	const job: OcrJob = {
+		id: crypto.randomUUID(),
+		tabId,
+		tabUrl,
+		type: msg.targetType ?? "image",
+		target: msg.target ?? "",
+		status: "queued",
+		createdAt: Date.now(),
+	};
+	ocrJobRegistry.set(job.id, job);
+	return job;
+}
+
+function updateOcrJobMetadata(
+	jobId: string,
+	metadata: {
+		type?: "image" | "canvas";
+		target?: string;
+		tabId?: number;
+		tabUrl?: string;
+	},
+) {
+	const job = ocrJobRegistry.get(jobId);
+	if (!job) return;
+	if (metadata.type !== undefined) job.type = metadata.type;
+	if (metadata.target !== undefined) job.target = metadata.target;
+	if (metadata.tabId !== undefined) job.tabId = metadata.tabId;
+	if (metadata.tabUrl !== undefined) job.tabUrl = metadata.tabUrl;
+	if (job.status === "queued") job.status = "processing";
+}
+
+function markJobProcessing(jobId: string) {
+	const job = ocrJobRegistry.get(jobId);
+	if (!job) return;
+	if (job.status === "queued") job.status = "processing";
+}
+
+function settleOcrJob(
+	jobId: string | undefined,
+	status: OcrJobStatus,
+	error?: string,
+) {
+	if (!jobId) return;
+	const job = ocrJobRegistry.get(jobId);
+	if (!job) return;
+	if (job.status === "done" || job.status === "error") return;
+	job.status = status;
+	job.finishedAt = Date.now();
+	if (error) job.error = error;
+}
 
 function scheduleBatchFlush() {
 	if (batchTimer !== null) return;
@@ -181,8 +316,38 @@ async function flushOcrBatch() {
 	activeBatchCount++;
 
 	try {
-		const resolvedItems = await Promise.all(
+		// Resolve a cache key for every item first — identical images coming
+		// from different tabs are served from the cache without touching the
+		// offscreen document.
+		const prepared = await Promise.all(
 			batch.map(async (item) => {
+				const key = await hashImageData(
+					item.msg.imageData,
+					item.msg.fetchingType,
+				);
+				return { item, key, cached: ocrCache.get(key) };
+			}),
+		);
+
+		for (const entry of prepared) {
+			markJobProcessing(entry.item.jobId);
+		}
+
+		const cacheMisses = prepared.filter((entry) => entry.cached === undefined);
+		for (const entry of prepared) {
+			if (!entry.cached) continue;
+			respondToItem(entry.item, {
+				success: true,
+				ocrData: entry.cached,
+				jobId: entry.item.jobId,
+			});
+		}
+
+		if (cacheMisses.length === 0) return;
+
+		const resolvedItems = await Promise.all(
+			cacheMisses.map(async (entry) => {
+				const item = entry.item;
 				if (item.msg.fetchingType === "url" && item.msg.headers) {
 					const base64 = await fetchImageAsBase64(
 						item.msg.imageData,
@@ -230,31 +395,47 @@ async function flushOcrBatch() {
 
 		if (response?.success && Array.isArray(response.results)) {
 			const results = response.results;
-			batch.forEach((item, index) => {
+			cacheMisses.forEach((entry, index) => {
 				const result = results[index];
 				if (result?.success) {
-					item.sendResponse({ success: true, ocrData: result.data });
+					const ocrData = result.data ?? [];
+					ocrCache.set(entry.key, ocrData);
+					respondToItem(entry.item, {
+						success: true,
+						ocrData,
+						jobId: entry.item.jobId,
+					});
 				} else {
-					item.sendResponse({
+					const error = result?.error || "Unknown batch item error";
+					settleOcrJob(entry.item.jobId, "error", error);
+					respondToItem(entry.item, {
 						success: false,
-						error: result?.error || "Unknown batch item error",
+						error,
+						jobId: entry.item.jobId,
 					});
 				}
 			});
 		} else {
-			batch.forEach((item) => {
-				item.sendResponse({
+			const error = response?.error || "Batch processing failed";
+			cacheMisses.forEach((entry) => {
+				settleOcrJob(entry.item.jobId, "error", error);
+				respondToItem(entry.item, {
 					success: false,
-					error: response?.error || "Batch processing failed",
+					error,
+					jobId: entry.item.jobId,
 				});
 			});
 		}
 	} catch (error) {
+		const errorMsg =
+			error instanceof Error ? error.message : "Batch processing failed";
 		batch.forEach((item) => {
-			item.sendResponse({
+			if (item.responded) return;
+			settleOcrJob(item.jobId, "error", errorMsg);
+			respondToItem(item, {
 				success: false,
-				error:
-					error instanceof Error ? error.message : "Batch processing failed",
+				error: errorMsg,
+				jobId: item.jobId,
 			});
 		});
 	} finally {

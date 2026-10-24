@@ -3,6 +3,9 @@ import type {
 	CanvasInfoWithStatus,
 	ImageInfoWithStatus,
 	OCRRegion,
+	OcrJobCompletedMessage,
+	OcrJobFailedMessage,
+	OcrJobStartedMessage,
 	TranslateCompleteMessage,
 	TranslateProgressMessage,
 	TranslateRegionsMessage,
@@ -26,6 +29,26 @@ import { setDefaultTargetLang } from "@/utils/translation-popup";
 
 const imageState = createElementState<HTMLImageElement>();
 const canvasState = createElementState<HTMLCanvasElement>();
+
+/**
+ * Resolves the status shown in the popup.
+ *
+ * Priority: in-flight processing wins over errors, an error wins over a
+ * finished job, and an element is only "done" once its translated overlay
+ * has actually been painted.
+ */
+function resolveElementStatus(
+	isProcessing: boolean,
+	hasError: boolean,
+	isTranslated: boolean,
+	isProcessed: boolean,
+): ImageInfoWithStatus["status"] {
+	if (isProcessing) return "processing";
+	if (hasError) return "error";
+	if (isTranslated) return "done";
+	if (isProcessed) return "processing";
+	return "pending";
+}
 
 function renderImageOverlay(img: HTMLImageElement, ocrRegions: OCRRegion[]) {
 	const currentSrc = img.currentSrc || img.src;
@@ -72,7 +95,7 @@ function renderCanvasOverlay(
 	canvas: HTMLCanvasElement,
 	ocrRegions: OCRRegion[],
 ) {
-	const canvasKey = canvas.toDataURL();
+	const canvasKey = readCanvasKey(canvas);
 
 	if (
 		canvasState.processed.has(canvas) &&
@@ -107,12 +130,12 @@ function renderCanvasOverlay(
 	canvasState.schedulePositionUpdate();
 }
 
+type TranslationOutcome = "translated" | "failed";
+
 async function translateAndUpdateOverlay(
-	element: HTMLImageElement | HTMLCanvasElement,
 	ocrRegions: OCRRegion[],
-	getOverlay: () => HTMLElement | undefined,
 	renderOverlay: (regions: OCRRegion[]) => void,
-): Promise<void> {
+): Promise<TranslationOutcome> {
 	try {
 		console.log("[Content] sending translate/regions", {
 			regionCount: ocrRegions.length,
@@ -128,14 +151,59 @@ async function translateAndUpdateOverlay(
 			console.log("[Content] translate/regions success", {
 				regionCount: response.regions.length,
 			});
-			const translatedRegions = response.regions;
-			renderOverlay(translatedRegions);
-		} else {
-			console.log("[Content] translate/regions failed", { response });
+			renderOverlay(response.regions);
+			return "translated";
 		}
+
+		console.log("[Content] translate/regions failed", { response });
+		return "failed";
 	} catch (error) {
 		console.error("[Content] Translation failed:", error);
+		return "failed";
 	}
+}
+
+function reportJobStarted(
+	jobId: string | undefined,
+	targetType: "image" | "canvas",
+	target: string,
+) {
+	if (!jobId) return;
+	browser.runtime
+		.sendMessage({
+			from: "content",
+			to: "background",
+			type: "ocr/job-started",
+			jobId,
+			targetType,
+			target,
+		} satisfies OcrJobStartedMessage)
+		.catch(() => { });
+}
+
+function reportJobCompleted(jobId: string | undefined) {
+	if (!jobId) return;
+	browser.runtime
+		.sendMessage({
+			from: "content",
+			to: "background",
+			type: "ocr/job-completed",
+			jobId,
+		} satisfies OcrJobCompletedMessage)
+		.catch(() => { });
+}
+
+function reportJobFailed(jobId: string | undefined, error?: string) {
+	if (!jobId) return;
+	browser.runtime
+		.sendMessage({
+			from: "content",
+			to: "background",
+			type: "ocr/job-failed",
+			jobId,
+			error,
+		} satisfies OcrJobFailedMessage)
+		.catch(() => { });
 }
 
 function observeImageSrc(img: HTMLImageElement) {
@@ -150,28 +218,44 @@ function observeCanvasSize(canvas: HTMLCanvasElement) {
 	});
 }
 
+/**
+ * Content key of a canvas. `toDataURL()` throws for canvases tainted by
+ * cross-origin content, so fall back to an empty key in that case.
+ */
+function readCanvasKey(canvas: HTMLCanvasElement): string {
+	try {
+		return canvas.toDataURL();
+	} catch {
+		return "";
+	}
+}
+
 function processNewImage(img: HTMLImageElement) {
 	if (imageState.processingSet.has(img)) return;
 	imageState.clearError(img);
+	imageState.clearTranslated(img);
 	imageState.processingSet.add(img);
+	let translationStarted = false;
 	processImage(
 		img,
-		(ocrData) => {
+		(ocrData, jobId) => {
+			translationStarted = true;
 			renderImageOverlay(img, ocrData);
 			observeImageSrc(img);
-			// Trigger translation after OCR completes
-			translateAndUpdateOverlay(
-				img,
-				ocrData,
-				() => imageState.overlayMap.get(img),
-				(regions) => renderImageOverlay(img, regions),
-			);
+			reportJobStarted(jobId, "image", img.currentSrc || img.src);
+			// Trigger translation after OCR completes. The element stays in the
+			// processing set until the translated overlay has been painted.
+			void settleImageAfterTranslation(img, ocrData, jobId);
 		},
 		() => {
-			imageState.processingSet.delete(img);
+			if (!translationStarted) {
+				// OCR never produced a result — release the element.
+				imageState.processingSet.delete(img);
+			}
 		},
 		(error) => {
 			const errorMsg = error instanceof Error ? error.message : error;
+			imageState.processingSet.delete(img);
 			imageState.setError(img, errorMsg);
 			showToast(errorMsg, "error");
 			browser.runtime
@@ -181,33 +265,63 @@ function processNewImage(img: HTMLImageElement) {
 					type: "extension/error",
 					error: errorMsg,
 				})
-				.catch(() => {});
+				.catch(() => { });
 		},
 	);
+}
+
+async function settleImageAfterTranslation(
+	img: HTMLImageElement,
+	ocrData: OCRRegion[],
+	jobId: string | undefined,
+) {
+	const outcome = await translateAndUpdateOverlay(ocrData, (regions) =>
+		renderImageOverlay(img, regions),
+	);
+	if (outcome === "translated") {
+		if (document.contains(img)) {
+			imageState.setTranslated(img, img.currentSrc || img.src);
+		}
+		reportJobCompleted(jobId);
+	} else {
+		if (document.contains(img)) {
+			imageState.setError(img, "Translation failed");
+		}
+		reportJobFailed(jobId, "Translation failed");
+	}
+	imageState.processingSet.delete(img);
 }
 
 function processNewCanvas(canvas: HTMLCanvasElement) {
 	if (canvasState.processingSet.has(canvas)) return;
 	canvasState.clearError(canvas);
+	canvasState.clearTranslated(canvas);
 	canvasState.processingSet.add(canvas);
+	let translationStarted = false;
 	processCanvas(
 		canvas,
-		(ocrData) => {
+		(ocrData, jobId) => {
+			translationStarted = true;
 			renderCanvasOverlay(canvas, ocrData);
 			observeCanvasSize(canvas);
-			// Trigger translation after OCR completes
-			translateAndUpdateOverlay(
-				canvas,
-				ocrData,
-				() => canvasState.overlayMap.get(canvas),
-				(regions) => renderCanvasOverlay(canvas, regions),
+			reportJobStarted(
+				jobId,
+				"canvas",
+				`canvas:${Array.from(document.querySelectorAll("canvas")).indexOf(canvas)}`,
 			);
+			// Trigger translation after OCR completes. The element stays in the
+			// processing set until the translated overlay has been painted.
+			void settleCanvasAfterTranslation(canvas, ocrData, jobId);
 		},
 		() => {
-			canvasState.processingSet.delete(canvas);
+			if (!translationStarted) {
+				// OCR never produced a result — release the element.
+				canvasState.processingSet.delete(canvas);
+			}
 		},
 		(error) => {
 			const errorMsg = error instanceof Error ? error.message : error;
+			canvasState.processingSet.delete(canvas);
 			canvasState.setError(canvas, errorMsg);
 			showToast(errorMsg, "error");
 			browser.runtime
@@ -217,9 +331,32 @@ function processNewCanvas(canvas: HTMLCanvasElement) {
 					type: "extension/error",
 					error: errorMsg,
 				})
-				.catch(() => {});
+				.catch(() => { });
 		},
 	);
+}
+
+async function settleCanvasAfterTranslation(
+	canvas: HTMLCanvasElement,
+	ocrData: OCRRegion[],
+	jobId: string | undefined,
+) {
+	const outcome = await translateAndUpdateOverlay(ocrData, (regions) =>
+		renderCanvasOverlay(canvas, regions),
+	);
+	const attached = document.contains(canvas);
+	if (outcome === "translated") {
+		if (attached) {
+			canvasState.setTranslated(canvas, readCanvasKey(canvas));
+		}
+		reportJobCompleted(jobId);
+	} else {
+		if (attached) {
+			canvasState.setError(canvas, "Translation failed");
+		}
+		reportJobFailed(jobId, "Translation failed");
+	}
+	canvasState.processingSet.delete(canvas);
 }
 
 async function syncSettingsTargetLang() {
@@ -250,7 +387,7 @@ async function autoTranslateIfAllowed() {
 	if (!settings.enabled) return;
 
 	const tabUrl = window.location.href;
-	if (!isUrlAllowedInSettings(tabUrl)) return;
+	if (!await isUrlAllowedInSettings(tabUrl)) return;
 
 	if (liveObserver) {
 		liveObserver.disconnect();
@@ -305,19 +442,19 @@ function collectImageInfo(): ImageInfoWithStatus[] {
 			style.opacity === "0"
 		)
 			continue;
+		const currentSrc = img.currentSrc || img.src;
 		images.push({
 			src: img.src,
-			currentSrc: img.currentSrc || img.src,
+			currentSrc,
 			width,
 			height,
-			status: imageState.processingSet.has(img)
-				? "processing"
-				: imageState.errorMap.has(img)
-					? "error"
-					: imageState.processed.has(img) &&
-							imageState.processed.get(img) === (img.currentSrc || img.src)
-						? "done"
-						: "pending",
+			status: resolveElementStatus(
+				imageState.processingSet.has(img),
+				imageState.errorMap.has(img),
+				imageState.hasTranslated(img, currentSrc),
+				imageState.processed.has(img) &&
+				imageState.processed.get(img) === currentSrc,
+			),
 		});
 	}
 
@@ -328,6 +465,9 @@ async function sendOcrToHost(src: string, ocrRegions: OCRRegion[]) {
 	const img = findImageBySrc(src);
 	if (!img) return;
 	renderImageOverlay(img, ocrRegions);
+	// Host-driven overlays are already final — mark them as translated so the
+	// popup reports "Done" instead of "Translating...".
+	imageState.setTranslated(img, img.currentSrc || img.src);
 }
 
 async function removeOcrFromHost(src: string) {
@@ -349,8 +489,8 @@ export default defineContentScript({
 	runAt: "document_idle",
 	main() {
 		console.log("Content script loaded for URL:", window.location.href);
-		autoTranslateIfAllowed();
 		syncSettingsTargetLang();
+		autoTranslateIfAllowed();
 
 		const urlPolling = startUrlPolling(() => {
 			autoTranslateIfAllowed();
@@ -535,18 +675,18 @@ function collectCanvasInfo(): CanvasInfoWithStatus[] {
 			style.opacity === "0"
 		)
 			continue;
+		const canvasKey = readCanvasKey(canvas);
 		canvases.push({
 			index: i,
 			width,
 			height,
-			status: canvasState.processingSet.has(canvas)
-				? "processing"
-				: canvasState.errorMap.has(canvas)
-					? "error"
-					: canvasState.processed.has(canvas) &&
-							canvasState.processed.get(canvas) === canvas.toDataURL()
-						? "done"
-						: "pending",
+			status: resolveElementStatus(
+				canvasState.processingSet.has(canvas),
+				canvasState.errorMap.has(canvas),
+				canvasState.hasTranslated(canvas, canvasKey),
+				canvasState.processed.has(canvas) &&
+				canvasState.processed.get(canvas) === canvasKey,
+			),
 		});
 	}
 

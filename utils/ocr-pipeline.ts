@@ -1,9 +1,17 @@
 import ResizeObserverPolyfill from "resize-observer-polyfill";
-import type { OCRRegion, ProcessOcrMessage } from "@/types";
+import type { OCRRegion, ProcessOcrMessage, ProcessOcrResponse } from "@/types";
 
 if (typeof window !== "undefined" && !window.ResizeObserver) {
 	window.ResizeObserver = ResizeObserverPolyfill;
 }
+
+/** Callback invoked with the OCR regions and the background job identifier. */
+export type OcrSuccessCallback = (
+	ocrRegions: OCRRegion[],
+	jobId?: string,
+) => void;
+
+export type OcrErrorCallback = (error: string | Error) => void;
 
 function resolveBestImageUrl(img: HTMLImageElement): string {
 	const srcset = img.getAttribute("srcset");
@@ -95,19 +103,22 @@ function tryFetchBase64(src: string): Promise<string | null> {
 
 async function sendOcrWithBase64(
 	base64: string,
-	onSuccess: (ocrRegions: OCRRegion[]) => void,
-	onError: (error: string | Error) => void,
+	target: string,
+	onSuccess: OcrSuccessCallback,
+	onError: OcrErrorCallback,
 ) {
-	const bgResponse = await browser.runtime.sendMessage({
+	const bgResponse = (await browser.runtime.sendMessage({
 		from: "content",
 		to: "background",
 		type: "ocr/process",
 		fetchingType: "base64",
 		imageData: base64,
-	} satisfies ProcessOcrMessage);
+		targetType: "image",
+		target,
+	} satisfies ProcessOcrMessage)) as ProcessOcrResponse | undefined;
 
 	if (bgResponse?.success && bgResponse.ocrData) {
-		onSuccess(bgResponse.ocrData);
+		onSuccess(bgResponse.ocrData, bgResponse.jobId);
 	} else {
 		onError(bgResponse?.error ?? "OCR processing failed");
 	}
@@ -116,20 +127,23 @@ async function sendOcrWithBase64(
 async function sendOcrWithUrl(
 	imageUrl: string,
 	headers: Record<string, string>,
-	onSuccess: (ocrRegions: OCRRegion[]) => void,
-	onError: (error: string | Error) => void,
+	target: string,
+	onSuccess: OcrSuccessCallback,
+	onError: OcrErrorCallback,
 ) {
-	const bgResponse = await browser.runtime.sendMessage({
+	const bgResponse = (await browser.runtime.sendMessage({
 		from: "content",
 		to: "background",
 		type: "ocr/process",
 		fetchingType: "url",
 		imageData: imageUrl,
 		headers,
-	} satisfies ProcessOcrMessage);
+		targetType: "image",
+		target,
+	} satisfies ProcessOcrMessage)) as ProcessOcrResponse | undefined;
 
 	if (bgResponse?.success && bgResponse.ocrData) {
-		onSuccess(bgResponse.ocrData);
+		onSuccess(bgResponse.ocrData, bgResponse.jobId);
 	} else {
 		onError(bgResponse?.error ?? "OCR processing failed");
 	}
@@ -137,9 +151,9 @@ async function sendOcrWithUrl(
 
 async function processImage(
 	img: HTMLImageElement,
-	onSuccess: (ocrRegions: OCRRegion[]) => void,
+	onSuccess: OcrSuccessCallback,
 	onComplete: () => void,
-	onError: (error: string | Error) => void,
+	onError: OcrErrorCallback,
 ) {
 	if (!img || !(img instanceof HTMLImageElement)) {
 		console.error("Image not found");
@@ -147,10 +161,12 @@ async function processImage(
 		return;
 	}
 
+	const target = img.currentSrc || img.src;
+
 	try {
 		let base64 = await tryCanvasBase64(img);
 		if (base64) {
-			await sendOcrWithBase64(base64, onSuccess, onError);
+			await sendOcrWithBase64(base64, target, onSuccess, onError);
 			onComplete();
 			return;
 		}
@@ -158,7 +174,7 @@ async function processImage(
 		const imageUrl = resolveBestImageUrl(img);
 		base64 = await tryFetchBase64(imageUrl);
 		if (base64) {
-			await sendOcrWithBase64(base64, onSuccess, onError);
+			await sendOcrWithBase64(base64, target, onSuccess, onError);
 			onComplete();
 			return;
 		}
@@ -172,6 +188,7 @@ async function processImage(
 				"Accept-Language": navigator.language,
 				Referer: window.location.href,
 			},
+			target,
 			onSuccess,
 			onError,
 		);
@@ -187,22 +204,27 @@ async function processImage(
 
 async function processCanvas(
 	canvas: HTMLCanvasElement,
-	onSuccess: (ocrRegions: OCRRegion[]) => void,
+	onSuccess: OcrSuccessCallback,
 	onComplete: () => void,
-	onError: (error: string | Error) => void,
+	onError: OcrErrorCallback,
 ) {
 	try {
 		const base64 = canvas.toDataURL("image/png");
-		const bgResponse = await browser.runtime.sendMessage({
+		const canvasIndex = Array.from(document.querySelectorAll("canvas")).indexOf(
+			canvas,
+		);
+		const bgResponse = (await browser.runtime.sendMessage({
 			from: "content",
 			to: "background",
 			type: "ocr/process",
 			fetchingType: "base64",
 			imageData: base64,
-		} satisfies ProcessOcrMessage);
+			targetType: "canvas",
+			target: `canvas:${canvasIndex}`,
+		} satisfies ProcessOcrMessage)) as ProcessOcrResponse | undefined;
 
 		if (bgResponse?.success && bgResponse.ocrData) {
-			onSuccess(bgResponse.ocrData);
+			onSuccess(bgResponse.ocrData, bgResponse.jobId);
 		} else {
 			onError(bgResponse?.error ?? "OCR processing failed");
 		}
